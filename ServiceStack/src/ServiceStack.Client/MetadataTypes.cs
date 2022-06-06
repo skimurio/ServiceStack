@@ -332,6 +332,9 @@ namespace ServiceStack
         public int? Step { get; set; }
         public int? MinLength { get; set; }
         public int? MaxLength { get; set; }
+        public string Accept  { get; set; }
+        public string Capture  { get; set; }
+        public bool? Multiple { get; set; }
         public string[] AllowableValues { get; set; }
         public KeyValuePair<string,string>[] AllowableEntries { get; set; }
         public string Options  { get; set; }
@@ -1003,6 +1006,9 @@ namespace ServiceStack
                 Step = input.Step.NullIfMinValue(),
                 MinLength = input.MinLength.NullIfMinValue(),
                 MaxLength = input.MaxLength.NullIfMinValue(),
+                Accept = input.Accept,
+                Capture = input.Capture,
+                Multiple = input.Multiple.NullIfFalse(),
                 AllowableValues = input.AllowableValues,
                 Options = input.Options,
                 Ignore = input.Ignore.NullIfFalse(),
@@ -1158,7 +1164,7 @@ namespace ServiceStack
         }
         
         /// <summary>
-        /// Reorder where the DB Column appears in Type (changes API & UI ordering)
+        /// Reorder where the DB Column appears in Type (changes API &amp; UI ordering)
         /// </summary>
         public static MetadataPropertyType ReorderProperty(this MetadataType type, string name, string before = null, string after = null)
         {
@@ -1179,7 +1185,7 @@ namespace ServiceStack
         }
     
         /// <summary>
-        /// Reorder where the DB Column appears in Type (changes API & UI ordering)
+        /// Reorder where the DB Column appears in Type (changes API &amp; UI ordering)
         /// </summary>
         public static MetadataPropertyType ReorderProperty(this MetadataType type, string name, int index)
         {

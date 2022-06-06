@@ -38,11 +38,13 @@ public class ConfigureAuth : IHostingStartup
             var appSettings = appHost.AppSettings;
             appHost.Plugins.Add(new AuthFeature(() => new CustomUserSession(),
                 new IAuthProvider[] {
+                    new CredentialsAuthProvider(appSettings),
                     new JwtAuthProvider(appSettings) {
                         AuthKeyBase64 = appSettings.GetString("AuthKeyBase64") ?? "cARl12kvS/Ra4moVBIaVsrWwTpXYuZ0mZf/gNLUhDW5=",
                     },
                     new ApiKeyAuthProvider(appSettings),
-                    new CredentialsAuthProvider(appSettings),
+                    new CustomCredentialsProvider(appSettings),
+                    
                     new FacebookAuthProvider(appSettings),
                     new GoogleAuthProvider(appSettings),
                     new MicrosoftGraphAuthProvider(appSettings),
@@ -50,8 +52,16 @@ public class ConfigureAuth : IHostingStartup
             {
                 // IncludeDefaultLogin = false
                 ProfileImages = new PersistentImagesHandler("/auth-profiles", Svg.GetStaticContent(Svg.Icons.Female),
-                    appHost.VirtualFiles, "/App_Data/auth-profiles")
+                    appHost.VirtualFiles, "/App_Data/auth-profiles"),
+                // OnAfterInit = {
+                //     feature => appHost.AddToAppMetadata(meta => {
+                //         meta.Plugins.Auth.AuthProviders.RemoveAll(x => x.Name == "credentials");
+                //     })
+                // }
             });
+            
+            appHost.GetPlugin<MetadataFeature>().AfterAppMetadataFilters.Add(meta =>
+                meta.Plugins.Auth.AuthProviders.RemoveAll(x => x.Name == "credentials"));
 
             appHost.Plugins.Add(new RegistrationFeature()); //Enable /register Service
 
@@ -60,6 +70,14 @@ public class ConfigureAuth : IHostingStartup
         });
 }
 
+public class CustomCredentialsProvider : CredentialsAuthProvider
+{
+    public CustomCredentialsProvider(IAppSettings appSettings)
+        : base(appSettings, "custom")
+    {
+        Label = "Alt Auth";
+    }
+}
 
 /*
 // Call QueryApiKeys to view API Keys
