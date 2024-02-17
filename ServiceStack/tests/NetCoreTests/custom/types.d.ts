@@ -69,6 +69,10 @@ export type App = {
 
 /** Utility class for managing Forms UI and behavior */
 export type Forms = {
+    /** Server Metadata */
+    Server: AppMetadata;
+    /** Client Metadata APIs */
+    Meta: Meta,
     getId: (type: MetadataType, row: any) => any;
     getType: (typeRef: string | {
         namespace: string;
@@ -135,7 +139,6 @@ export type Forms = {
     isRequired(input: any): boolean;
     resolveFormLayout(op: MetadataOperationType): InputInfo[];
     formValues(form: any): Record<string,any>;
-    formData(form: any, op: MetadataOperationType): FormData;
     groupTypes(allTypes: any): any[];
     complexProp(prop: any): boolean;
     supportsProp(prop: any): boolean;
@@ -150,12 +153,18 @@ export type Meta = {
     CACHE: {};
     /** HTTP Errors specially handled by Locode */
     HttpErrors: Record<number, string>;
+    /** Server Metadata */
+    Server: AppMetadata;
     /** Map of Request DTO names to `MetadataOperationType` */
     OpsMap: Record<string, MetadataOperationType>;
     /** Map of DTO names to `MetadataType` */
     TypesMap: Record<string, MetadataType>;
     /** Map of DTO namespace + names to `MetadataType` */
     FullTypesMap: Record<string, MetadataType>;
+    /** Get list of Request DTOs */
+    operations: MetadataOperationType[];
+    /** Get list of unique API tags */
+    tags: string[];
     /** Find `MetadataOperationType` by API name */
     getOp: (opName: string) => MetadataOperationType;
     /** Find `MetadataType` by DTO name */
@@ -166,6 +175,10 @@ export type Meta = {
     enumValues: (type: string) => { key: string; value: string; }[];
     /** Get API Icon */
     getIcon: (args: ({ op?: MetadataOperationType; type?: MetadataType; })) => { svg: string; };
+    /** Get Locode URL */
+    locodeUrl: (op:string) => string;
+    /** Get URL with initial queryString state */
+    urlWithState: (url:string) => string;
 };
 
 /** Reactive store to manage page navigation state and sync with history.pushState */

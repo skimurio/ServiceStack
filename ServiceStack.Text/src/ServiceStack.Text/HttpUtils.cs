@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -54,12 +55,50 @@ public static partial class HttpUtils
         return url + prefix + key + "=" + (encode ? val.UrlEncode() : val);
     }
 
+    public static string AddQueryParams(this string url, Dictionary<string, object> args)
+    {
+        var sb = StringBuilderCache.Allocate()
+            .Append(url);
+        
+        var i = 0;
+        foreach (var entry in args)
+        {
+            if (entry.Value == null) 
+                continue;
+
+            sb.Append(i++ == 0 && url.IndexOf('?') == -1 ? '?' : '&');
+            sb.Append($"{entry.Key.UrlEncode()}={entry.Value.ConvertTo<string>().UrlEncode()}");
+        }
+        return StringBuilderCache.ReturnAndFree(sb);
+    }
+    
+    public static string AddNameValueCollection(this string url, NameValueCollection queryParams)
+    {
+        var sb = StringBuilderCache.Allocate()
+            .Append(url);
+        
+        foreach (string key in queryParams.AllKeys)
+        {
+            var values = queryParams.GetValues(key);
+            if (values == null) 
+                continue;
+
+            var i = 0;
+            foreach (var value in values)
+            {
+                sb.Append(i++ == 0 && url.IndexOf('?') == -1 ? '?' : '&');
+                sb.Append($"{key.UrlEncode()}={value.UrlEncode()}");
+            }
+        }
+        return StringBuilderCache.ReturnAndFree(sb);
+    }
+    
     public static string SetQueryParam(this string url, string key, string val)
     {
         if (url == null)
             url = "";
             
-        if (key == null || val == null)
+        if (key == null)
             return url;
             
         var qsPos = url.IndexOf('?');
@@ -75,6 +114,10 @@ public static partial class HttpUtils
                 if (endPos == -1)
                     endPos = url.Length;
 
+                // remove if null
+                if (val == null)
+                    return url.Substring(0, existingKeyPos);
+
                 var newUrl = url.Substring(0, existingKeyPos + key.Length + 1)
                              + "="
                              + val.UrlEncode()
@@ -82,6 +125,10 @@ public static partial class HttpUtils
                 return newUrl;
             }
         }
+
+        if (val == null)
+            return url;
+
         var prefix = qsPos == -1 ? "?" : "&";
         return url + prefix + key + "=" + val.UrlEncode();
     }
@@ -303,7 +350,7 @@ public static partial class HttpUtils
 
     public static string GetResponseBody(this Exception ex)
     {
-        if (!(ex is WebException webEx) || webEx.Response == null || webEx.Status != WebExceptionStatus.ProtocolError)
+        if (ex is not WebException webEx || webEx.Response == null || webEx.Status != WebExceptionStatus.ProtocolError)
             return null;
 
         var errorResponse = (HttpWebResponse)webEx.Response;
@@ -313,7 +360,7 @@ public static partial class HttpUtils
 
     public static async Task<string> GetResponseBodyAsync(this Exception ex, CancellationToken token = default)
     {
-        if (!(ex is WebException webEx) || webEx.Response == null || webEx.Status != WebExceptionStatus.ProtocolError)
+        if (ex is not WebException webEx || webEx.Response == null || webEx.Status != WebExceptionStatus.ProtocolError)
             return null;
 
         var errorResponse = (HttpWebResponse)webEx.Response;
@@ -337,8 +384,7 @@ public static partial class HttpUtils
     {
         using var stream = webRes.GetResponseStream();
         using var reader = new StreamReader(stream, UseEncoding, true, 1024, leaveOpen: true);
-        string line;
-        while ((line = reader.ReadLine()) != null)
+        while (reader.ReadLine() is { } line)
         {
             yield return line;
         }

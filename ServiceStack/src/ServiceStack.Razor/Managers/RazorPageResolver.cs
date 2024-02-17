@@ -40,8 +40,9 @@ namespace ServiceStack.Razor.Managers
             this.viewManager = viewManager;
         }
 
-        public IHttpHandler CatchAllHandler(string httpmethod, string pathInfo, string filepath)
+        public IHttpHandler CatchAllHandler(IRequest req)
         {
+            var pathInfo = req.PathInfo;
             //does not have a .cshtml extension
             var ext = Path.GetExtension(pathInfo);
             if (!string.IsNullOrEmpty(ext) && ext != config.RazorFileExtension)
@@ -204,7 +205,7 @@ namespace ServiceStack.Razor.Managers
                 catch (Exception ex)
                 {
                     ex = ex.UnwrapIfSingleException();
-                    if (!(ex is StopExecutionException))
+                    if (ex is not StopExecutionException)
                         throw;
                 }
 

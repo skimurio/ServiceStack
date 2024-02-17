@@ -2,7 +2,7 @@
   <PropertyGroup>
     <PackageId>ServiceStack.ProtoBuf</PackageId>
     <AssemblyName>ServiceStack.ProtoBuf</AssemblyName>
-    <TargetFrameworks>net472;netstandard2.0;net6.0</TargetFrameworks>
+    <TargetFrameworks>net472;netstandard2.0;net6.0;net8.0</TargetFrameworks>
     <Title>Protocol Buffers support for ServiceStack. Includes typed ProtoBuf Client</Title>
     <PackageDescription>
       Add the ProtoBuf binary format and endpoint to a ServiceStack web service host.
@@ -15,7 +15,7 @@
     <ProjectReference Include="..\ServiceStack.Client\ServiceStack.Client.csproj" />
     <ProjectReference Include="..\ServiceStack.Common\ServiceStack.Common.csproj" />
     <ProjectReference Include="..\ServiceStack\ServiceStack.csproj" />
-    <PackageReference Include="protobuf-net" Version="3.1.4" />
+    <PackageReference Include="protobuf-net" Version="3.2.30" />
   </ItemGroup>
   <ItemGroup Condition=" '$(TargetFramework)' == 'net472' ">
     <Reference Include="System" />

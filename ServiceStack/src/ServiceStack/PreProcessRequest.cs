@@ -1,3 +1,4 @@
+#nullable  enable
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -17,12 +18,15 @@ public class PreProcessRequest : IPlugin, IHasStringId
     /// <summary>
     /// Handle async file uploads 
     /// </summary>
-    public Func<IRequest, IHttpFile, CancellationToken, Task<string>> HandleUploadFileAsync { get; set; }
+    public Func<IRequest, IHttpFile, CancellationToken, Task<string?>>? HandleUploadFileAsync { get; set; }
 
     public void Register(IAppHost appHost)
     {
         if (HandleUploadFileAsync != null)
+        {
             appHost.GlobalRequestFiltersAsync.Add(HandleFileUploadsAsync);
+            appHost.GatewayRequestFiltersAsync.Add((req,dto) => HandleFileUploadsAsync(req, req.Response, dto));
+        }
     }
     
     public async Task HandleFileUploadsAsync(IRequest req, IResponse res, object dto)
@@ -31,7 +35,7 @@ public class PreProcessRequest : IPlugin, IHasStringId
         {
             var requestType = dto.GetType();
             // ignore unless a Request DTO Property contains [UploadTo] Attribute
-            if (!HostContext.Metadata.GetOperation(requestType).RequestPropertyAttributes.Contains(typeof(UploadToAttribute)))
+            if (!HostContext.Metadata.GetOperation(requestType)!.RequestPropertyAttributes!.Contains(typeof(UploadToAttribute)))
                 return;
 
             var uploadFileAsync = HandleUploadFileAsync
@@ -45,7 +49,7 @@ public class PreProcessRequest : IPlugin, IHasStringId
                 if (string.IsNullOrEmpty(uploadedPath))
                     continue;
                 if (!uploadedPathsMap.TryGetValue(file.Name, out var uploadedPaths))
-                    uploadedPaths = uploadedPathsMap[file.Name] = new List<(string,IHttpFile)>();
+                    uploadedPaths = uploadedPathsMap[file.Name] = [];
                 uploadedPaths.Add((uploadedPath,file));
             }
 

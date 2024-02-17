@@ -227,7 +227,7 @@ namespace ServiceStack.OrmLite
                     {
                         dbCmd.ExecuteSql(dropTableFks);
                     }
-                    dbCmd.ExecuteSql("DROP TABLE " + dialectProvider.GetQuotedTableName(modelDef));
+                    dbCmd.ExecuteSql($"DROP TABLE {dialectProvider.GetQuotedTableName(modelDef)}");
 
                     if (modelDef.PostDropTableSql != null)
                     {
@@ -338,18 +338,20 @@ namespace ServiceStack.OrmLite
             values = PopulateValues(reader, values, dialectProvider);
 
             var dbNullFilter = OrmLiteConfig.OnDbNullFilter;
+            FieldDefinition fieldDef = null;
+            object value = null;
 
             foreach (var fieldCache in indexCache)
             {
                 try
                 {
-                    var fieldDef = fieldCache.Item1;
+                    fieldDef = fieldCache.Item1;
                     var index = fieldCache.Item2;
                     var converter = fieldCache.Item3;
 
                     if (values != null && values[index] == DBNull.Value)
                     {
-                        var value = fieldDef.IsNullable ? null : fieldDef.FieldTypeDefaultValue;
+                        value = fieldDef.IsNullable ? null : fieldDef.FieldTypeDefaultValue;
                         var useValue = dbNullFilter?.Invoke(fieldDef);
                         if (useValue != null)
                             value = useValue;
@@ -358,7 +360,7 @@ namespace ServiceStack.OrmLite
                     }
                     else
                     {
-                        var value = converter.GetValue(reader, index, values);
+                        value = converter.GetValue(reader, index, values);
                         if (value == null)
                         {
                             if (!fieldDef.IsNullable)
@@ -377,7 +379,11 @@ namespace ServiceStack.OrmLite
                 }
                 catch (Exception ex)
                 {
-                    OrmLiteUtils.HandleException(ex);
+                    Log.Error(ex, "Could not populate {0}.{1} with {2}: {3}",
+                        typeof(T).Name, fieldDef?.Name, value, ex.Message);
+
+                    if (OrmLiteConfig.ThrowOnError)
+                        throw;
                 }
             }
             
@@ -388,8 +394,7 @@ namespace ServiceStack.OrmLite
         {
             if (!OrmLiteConfig.DeoptimizeReader)
             {
-                if (values == null)
-                    values = new object[reader.FieldCount];
+                values ??= new object[reader.FieldCount];
 
                 try
                 {
@@ -461,8 +466,7 @@ namespace ServiceStack.OrmLite
             int count = 0;
             try
             {
-                if (dbCmd.Transaction == null)
-                    dbCmd.Transaction = dbTrans = dbCmd.Connection.BeginTransaction();
+                dbCmd.Transaction ??= dbTrans = dbCmd.Connection.BeginTransaction();
 
                 var dialectProvider = dbCmd.GetDialectProvider();
 
@@ -560,8 +564,7 @@ namespace ServiceStack.OrmLite
             int count = 0;
             try
             {
-                if (dbCmd.Transaction == null)
-                    dbCmd.Transaction = dbTrans = dbCmd.Connection.BeginTransaction();
+                dbCmd.Transaction ??= dbTrans = dbCmd.Connection.BeginTransaction();
 
                 var dialectProvider = dbCmd.GetDialectProvider();
 
@@ -719,33 +722,31 @@ namespace ServiceStack.OrmLite
 
             var dialectProvider = dbCmd.GetDialectProvider();
             var pkField = ModelDefinition<T>.Definition.FieldDefinitions.FirstOrDefault(f => f.IsPrimaryKey);
-            if (!enableIdentityInsert || pkField == null || !pkField.AutoIncrement)
+            if (!enableIdentityInsert || pkField is not { AutoIncrement: true })
             {
                 dialectProvider.PrepareParameterizedInsertStatement<T>(dbCmd,
                     insertFields: dialectProvider.GetNonDefaultValueInsertFields<T>(obj));
 
                 return InsertInternal<T>(dialectProvider, dbCmd, obj, commandFilter, selectIdentity);
             }
-            else
+
+            try
             {
-                try
+                dialectProvider.EnableIdentityInsert<T>(dbCmd);
+                dialectProvider.PrepareParameterizedInsertStatement<T>(dbCmd,
+                    insertFields: dialectProvider.GetNonDefaultValueInsertFields<T>(obj),
+                    shouldInclude: f => f == pkField);
+                InsertInternal<T>(dialectProvider, dbCmd, obj, commandFilter, selectIdentity);
+                if (selectIdentity)
                 {
-                    dialectProvider.EnableIdentityInsert<T>(dbCmd);
-                    dialectProvider.PrepareParameterizedInsertStatement<T>(dbCmd,
-                        insertFields: dialectProvider.GetNonDefaultValueInsertFields<T>(obj),
-                        shouldInclude: f => f == pkField);
-                    InsertInternal<T>(dialectProvider, dbCmd, obj, commandFilter, selectIdentity);
-                    if (selectIdentity)
-                    {
-                        var id = pkField.GetValue(obj);
-                        return Convert.ToInt64(id);
-                    }
-                    return default;
+                    var id = pkField.GetValue(obj);
+                    return Convert.ToInt64(id);
                 }
-                finally
-                {
-                    dialectProvider.DisableIdentityInsert<T>(dbCmd);
-                }
+                return default;
+            }
+            finally
+            {
+                dialectProvider.DisableIdentityInsert<T>(dbCmd);
             }
         }
         
@@ -887,8 +888,7 @@ namespace ServiceStack.OrmLite
 
             try
             {
-                if (dbCmd.Transaction == null)
-                    dbCmd.Transaction = dbTrans = dbCmd.Connection.BeginTransaction();
+                dbCmd.Transaction ??= dbTrans = dbCmd.Connection.BeginTransaction();
 
                 var dialectProvider = dbCmd.GetDialectProvider();
 
@@ -927,8 +927,7 @@ namespace ServiceStack.OrmLite
 
             try
             {
-                if (dbCmd.Transaction == null)
-                    dbCmd.Transaction = dbTrans = dbCmd.Connection.BeginTransaction();
+                dbCmd.Transaction ??= dbTrans = dbCmd.Connection.BeginTransaction();
 
                 var dialectProvider = dbCmd.GetDialectProvider();
 
@@ -974,7 +973,9 @@ namespace ServiceStack.OrmLite
         {
             var modelDef = typeof(T).GetModelDefinition();
             var id = modelDef.GetPrimaryKey(obj);
-            var existingRow = id != null ? dbCmd.SingleById<T>(id) : default(T);
+            var existingRow = id != null && !id.Equals(id.GetType().GetDefaultValue()) 
+                ? dbCmd.SingleById<T>(id) 
+                : default;
 
             if (Equals(existingRow, default(T)))
             {
@@ -1027,8 +1028,7 @@ namespace ServiceStack.OrmLite
 
             IDbTransaction dbTrans = null;
 
-            if (dbCmd.Transaction == null)
-                dbCmd.Transaction = dbTrans = dbCmd.Connection.BeginTransaction();
+            dbCmd.Transaction ??= dbTrans = dbCmd.Connection!.BeginTransaction();
 
             try
             {

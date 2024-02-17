@@ -27,19 +27,16 @@ namespace ServiceStack.Messaging
         {
             get
             {
-                if (this.readWriteClient == null)
-                {
-                    this.readWriteClient = (IRedisNativeClient)clientsManager.GetClient();
-                }
+                this.readWriteClient ??= (IRedisNativeClient)clientsManager.GetClient();
                 return readWriteClient;
             }
         }
 
         public void Publish<T>(T messageBody)
         {
-            var message = messageBody as IMessage;
-            if (message != null)
+            if (messageBody is IMessage message)
             {
+                Diagnostics.ServiceStack.InitMessage(message);
                 Publish(message.ToInQueueName(), message);
             }
             else
@@ -74,7 +71,7 @@ namespace ServiceStack.Messaging
 
         public void Publish(string queueName, IMessage message)
         {
-            var messageBytes = message.ToBytes();
+            var messageBytes = MessageSerializer.Instance.ToBytes(message);
             this.ReadWriteClient.LPush(queueName, messageBytes);
             this.ReadWriteClient.Publish(QueueNames.TopicIn, queueName.ToUtf8Bytes());
 

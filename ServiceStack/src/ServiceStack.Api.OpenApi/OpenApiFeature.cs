@@ -101,7 +101,7 @@ namespace ServiceStack.Api.OpenApi
         public void Register(IAppHost appHost)
         {
             if (ResourceFilterPattern != null)
-                OpenApiService.resourceFilterRegex = new Regex(ResourceFilterPattern, RegexOptions.Compiled);
+                OpenApiService.ResourceFilterRegex = new Regex(ResourceFilterPattern, RegexOptions.Compiled);
 
             if (SecurityDefinitions == null && OperationSecurity == null)
             {
@@ -129,8 +129,9 @@ namespace ServiceStack.Api.OpenApi
 
             if (!DisableSwaggerUI)
             {
-                appHost.CatchAllHandlers.Add((httpMethod, pathInfo, filePath) =>
+                appHost.CatchAllHandlers.Add(req =>
                 {
+                    var pathInfo = req.PathInfo;
                     IVirtualFile indexFile;
                     IVirtualFile patchFile = null;
                     IVirtualFile patchPreLoadFile = null;

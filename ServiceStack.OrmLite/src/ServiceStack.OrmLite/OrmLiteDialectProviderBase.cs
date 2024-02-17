@@ -34,12 +34,6 @@ namespace ServiceStack.OrmLite
     {
         protected static readonly ILog Log = LogManager.GetLogger(typeof(IOrmLiteDialectProvider));
 
-        protected OrmLiteDialectProviderBase()
-        {
-            Variables = new Dictionary<string, string>();
-            StringSerializer = new JsvStringSerializer();
-        }
-
         #region ADO.NET supported types
         /* ADO.NET UNDERSTOOD DATA TYPES:
 			COUNTER	DbType.Int64
@@ -123,7 +117,7 @@ namespace ServiceStack.OrmLite
             RegisterConverter<DateTime>(new DateTimeConverter());
             RegisterConverter<DateTimeOffset>(new DateTimeOffsetConverter());
 
-#if NET6_0
+#if NET6_0_OR_GREATER
             RegisterConverter<DateOnly>(new DateOnlyConverter());
             RegisterConverter<TimeOnly>(new TimeOnlyConverter());
 #endif
@@ -163,7 +157,7 @@ namespace ServiceStack.OrmLite
 
         public abstract IDbDataParameter CreateParam();
 
-        public Dictionary<string, string> Variables { get; set; }
+        public Dictionary<string, string> Variables { get; set; } = new();
 
         public IOrmLiteExecFilter ExecFilter { get; set; }
 
@@ -177,11 +171,24 @@ namespace ServiceStack.OrmLite
 
         public Action<IDbConnection> OnOpenConnection { get; set; }
 
+        internal int OneTimeConnectionCommandsRun;
+
+        /// <summary>
+        /// Enable Bulk Inserts from CSV files
+        /// </summary>
+        public bool AllowLoadLocalInfile
+        {
+            set => OneTimeConnectionCommands.Add($"SET GLOBAL LOCAL_INFILE={value.ToString().ToUpper()};");
+        }
+        
+        public List<string> OneTimeConnectionCommands { get; } = [];
+        public List<string> ConnectionCommands { get; } = [];
+
         public string ParamString { get; set; } = "@";
 
         public INamingStrategy NamingStrategy { get; set; } = new OrmLiteDefaultNamingStrategy();
 
-        public IStringSerializer StringSerializer { get; set; }
+        public IStringSerializer StringSerializer { get; set; } = new JsvStringSerializer();
 
         private Func<string, string> paramNameFilter;
         public Func<string, string> ParamNameFilter
@@ -189,6 +196,8 @@ namespace ServiceStack.OrmLite
             get => paramNameFilter ?? OrmLiteConfig.ParamNameFilter;
             set => paramNameFilter = value;
         }
+        
+        public virtual bool SupportsSchema => true;
 
         public string DefaultValueFormat = " DEFAULT ({0})";
 
@@ -242,6 +251,8 @@ namespace ServiceStack.OrmLite
                 converter.DialectProvider = null;
         }
 
+        public virtual void Init(string connectionString) {}
+
         public void RegisterConverter<T>(IOrmLiteConverter converter)
         {
             if (converter == null)
@@ -262,7 +273,7 @@ namespace ServiceStack.OrmLite
         public virtual bool ShouldQuoteValue(Type fieldType)
         {
             var converter = GetConverter(fieldType);
-            return converter == null || converter is NativeValueOrmLiteConverter;
+            return converter is null or NativeValueOrmLiteConverter;
         }
 
 		public virtual object FromDbRowVersion(Type fieldType, object value)
@@ -283,7 +294,7 @@ namespace ServiceStack.OrmLite
                 return EnumConverter;
 
             return type.IsRefType()
-                ? (IOrmLiteConverter)ReferenceTypeConverter
+                ? ReferenceTypeConverter
                 : ValueTypeConverter;
         }
 
@@ -301,7 +312,7 @@ namespace ServiceStack.OrmLite
                 return EnumConverter;
 
             return fieldType.IsRefType()
-                ? (IOrmLiteConverter)ReferenceTypeConverter
+                ? ReferenceTypeConverter
                 : ValueTypeConverter;
         }
 
@@ -364,6 +375,8 @@ namespace ServiceStack.OrmLite
             return NamingStrategy.GetSchemaName(schema);
         }
 
+        public virtual string GetTableName(Type modelType) => GetTableName(modelType.GetModelDefinition());
+
         public virtual string GetTableName(ModelDefinition modelDef) => 
             GetTableName(modelDef.ModelName, modelDef.Schema, useStrategy:true);
 
@@ -387,6 +400,8 @@ namespace ServiceStack.OrmLite
                 : QuoteIfRequired(table);
         }
 
+        public virtual string GetQuotedTableName(Type modelType) => GetQuotedTableName(modelType.GetModelDefinition());
+        
         public virtual string GetQuotedTableName(ModelDefinition modelDef)
         {
             return GetQuotedTableName(modelDef.ModelName, modelDef.Schema);
@@ -520,7 +535,7 @@ namespace ServiceStack.OrmLite
 
         protected virtual void ApplyTags(StringBuilder sqlBuilder, ISet<string> tags)
         {
-            if (tags != null && tags.Count > 0)
+            if (tags is { Count: > 0 })
             {
                 foreach (var tag in tags)
                 {
@@ -563,6 +578,29 @@ namespace ServiceStack.OrmLite
         public virtual string GenerateComment(in string text)
         {
             return $"-- {text}";
+        }
+
+        public virtual void InitConnection(IDbConnection dbConn)
+        {
+            if (dbConn is OrmLiteConnection ormLiteConn)
+                ormLiteConn.ConnectionId = Guid.NewGuid();
+
+            if (Interlocked.CompareExchange(ref OneTimeConnectionCommandsRun, 1, 0) == 0)
+            {
+                foreach (var command in OneTimeConnectionCommands)
+                {
+                    using var cmd = dbConn.CreateCommand();
+                    cmd.ExecNonQuery(command);
+                }
+            }
+            
+            foreach (var command in ConnectionCommands)
+            {
+                using var cmd = dbConn.CreateCommand();
+                cmd.ExecNonQuery(command);
+            }
+            
+            OnOpenConnection?.Invoke(dbConn);
         }
 
         public virtual SelectItem GetRowVersionSelectColumn(FieldDefinition field, string tablePrefix = null)
@@ -618,7 +656,7 @@ namespace ServiceStack.OrmLite
             return ret;
         }
 
-        public virtual FieldDefinition[] GetInsertFieldDefinitions(ModelDefinition modelDef, ICollection<string> insertFields)
+        public virtual FieldDefinition[] GetInsertFieldDefinitions(ModelDefinition modelDef, ICollection<string> insertFields=null)
         {
             var insertColumns = insertFields?.Map(ColumnNameOnly);
             return insertColumns != null 
@@ -626,6 +664,117 @@ namespace ServiceStack.OrmLite
                     ? modelDef.GetOrderedFieldDefinitions(insertColumns)
                     : modelDef.GetOrderedFieldDefinitions(insertColumns, name => NamingStrategy.GetColumnName(name)) 
                 : modelDef.FieldDefinitionsArray;
+        }
+
+        public virtual void AppendInsertRowValueSql(StringBuilder sbColumnValues, FieldDefinition fieldDef, object obj)
+        {
+            if (ShouldSkipInsert(fieldDef) && !fieldDef.AutoId)
+                return;
+
+            try
+            {
+                if (fieldDef.AutoId)
+                {
+                    var dbValue = GetInsertDefaultValue(fieldDef);
+                    sbColumnValues.Append(dbValue != null ? GetQuotedValue(dbValue.ToString()) : "NULL");
+                }
+                else
+                {
+                    sbColumnValues.Append(GetQuotedValue(fieldDef.GetValue(obj), fieldDef.FieldType));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("ERROR in ToInsertRowStatement(): " + ex.Message, ex);
+                throw;
+            }
+        }
+        
+        public virtual string ToInsertRowSql<T>(T obj, ICollection<string> insertFields = null)
+        {
+            var sbColumnNames = StringBuilderCache.Allocate();
+            var sbColumnValues = StringBuilderCacheAlt.Allocate();
+            var modelDef = obj.GetType().GetModelDefinition();
+
+            var fieldDefs = GetInsertFieldDefinitions(modelDef, insertFields);
+            foreach (var fieldDef in fieldDefs)
+            {
+                if (ShouldSkipInsert(fieldDef) && !fieldDef.AutoId)
+                    continue;
+
+                if (sbColumnNames.Length > 0)
+                    sbColumnNames.Append(",");
+
+                sbColumnNames.Append(GetQuotedColumnName(fieldDef.FieldName));
+
+                if (sbColumnValues.Length > 0)
+                    sbColumnValues.Append(",");
+
+                AppendInsertRowValueSql(sbColumnValues, fieldDef, obj);
+            }
+
+            var sql = $"INSERT INTO {GetQuotedTableName(modelDef)} ({StringBuilderCache.ReturnAndFree(sbColumnNames)}) " +
+                      $"VALUES ({StringBuilderCacheAlt.ReturnAndFree(sbColumnValues)})";
+
+            return sql;
+        }
+
+        public virtual string ToInsertRowsSql<T>(IEnumerable<T> objs, ICollection<string> insertFields = null)
+        {
+            var modelDef = ModelDefinition<T>.Definition;
+            var sb = StringBuilderCache.Allocate()
+                .Append($"INSERT INTO {GetQuotedTableName(modelDef)} (");
+
+            var fieldDefs = GetInsertFieldDefinitions(modelDef, insertFields:insertFields);
+            var i = 0;
+            foreach (var fieldDef in fieldDefs)
+            {
+                if (ShouldSkipInsert(fieldDef) && !fieldDef.AutoId)
+                    continue;
+
+                if (i++ > 0)
+                    sb.Append(",");
+
+                sb.Append(GetQuotedColumnName(fieldDef.FieldName));
+            }
+            sb.Append(") VALUES");
+
+            var count = 0;
+            foreach (var obj in objs)
+            {
+                count++;
+                sb.AppendLine();
+                sb.Append('(');
+                i = 0;
+                foreach (var fieldDef in fieldDefs)
+                {
+                    if (ShouldSkipInsert(fieldDef) && !fieldDef.AutoId)
+                        continue;
+
+                    if (i++ > 0)
+                        sb.Append(',');
+                
+                    AppendInsertRowValueSql(sb, fieldDef, obj);
+                }
+                sb.Append("),");
+            }
+            if (count == 0)
+                return "";
+
+            sb.Length--;
+            sb.AppendLine(";");
+            var sql = StringBuilderCache.ReturnAndFree(sb);
+            return sql;
+        }
+
+        public virtual void BulkInsert<T>(IDbConnection db, IEnumerable<T> objs, BulkInsertConfig config = null)
+        {
+            config ??= new();
+            foreach (var batch in objs.BatchesOf(config.BatchSize))
+            {
+                var sql = ToInsertRowsSql(batch, insertFields:config.InsertFields);
+                db.ExecuteSql(sql);
+            }
         }
 
         public virtual string ToInsertRowStatement(IDbCommand cmd, object objWithProperties, ICollection<string> insertFields = null)
@@ -807,6 +956,57 @@ namespace ServiceStack.OrmLite
             return sql;
         }
 
+        //Load Self Table.RefTableId PK
+        public virtual string GetRefSelfSql<From>(SqlExpression<From> refQ, ModelDefinition modelDef, FieldDefinition refSelf, ModelDefinition refModelDef)
+        {
+            refQ.Select(this.GetQuotedColumnName(modelDef, refSelf));
+            refQ.OrderBy().ClearLimits(); //clear any ORDER BY or LIMIT's in Sub Select's
+
+            var subSqlRef = refQ.ToMergedParamsSelectStatement();
+
+            var sqlRef = $"SELECT {GetColumnNames(refModelDef)} " +
+                         $"FROM {GetQuotedTableName(refModelDef)} " +
+                         $"WHERE {this.GetQuotedColumnName(refModelDef.PrimaryKey)} " +
+                         $"IN ({subSqlRef})";
+
+            if (OrmLiteConfig.LoadReferenceSelectFilter != null)
+                sqlRef = OrmLiteConfig.LoadReferenceSelectFilter(refModelDef.ModelType, sqlRef);
+
+            return sqlRef;
+        }
+
+        public virtual string GetRefFieldSql(string subSql, ModelDefinition refModelDef, FieldDefinition refField)
+        {
+            var sqlRef = $"SELECT {GetColumnNames(refModelDef)} " +
+                         $"FROM {GetQuotedTableName(refModelDef)} " +
+                         $"WHERE {this.GetQuotedColumnName(refField)} " +
+                         $"IN ({subSql})";
+
+            if (OrmLiteConfig.LoadReferenceSelectFilter != null)
+                sqlRef = OrmLiteConfig.LoadReferenceSelectFilter(refModelDef.ModelType, sqlRef);
+
+            return sqlRef;
+        }
+
+        public virtual string GetFieldReferenceSql(string subSql, FieldDefinition fieldDef, FieldReference fieldRef)
+        {
+            var refModelDef = fieldRef.RefModelDef;
+            
+            var useSubSql = $"SELECT {this.GetQuotedColumnName(fieldRef.RefIdFieldDef)} FROM "
+                + subSql.RightPart("FROM");
+
+            var pk = this.GetQuotedColumnName(refModelDef.PrimaryKey);
+            var sqlRef = $"SELECT {pk}, {this.GetQuotedColumnName(fieldRef.RefFieldDef)} " +
+                         $"FROM {GetQuotedTableName(refModelDef)} " +
+                         $"WHERE {pk} " +
+                         $"IN ({useSubSql})";
+
+            if (OrmLiteConfig.LoadReferenceSelectFilter != null)
+                sqlRef = OrmLiteConfig.LoadReferenceSelectFilter(refModelDef.ModelType, sqlRef);
+
+            return sqlRef;
+        }
+
         public virtual bool PrepareParameterizedUpdateStatement<T>(IDbCommand cmd, ICollection<string> updateFields = null)
         {
             var sql = StringBuilderCache.Allocate();
@@ -852,7 +1052,9 @@ namespace ServiceStack.OrmLite
                 }
                 catch (Exception ex)
                 {
-                    OrmLiteUtils.HandleException(ex, "ERROR in PrepareParameterizedUpdateStatement(): " + ex.Message);
+                    Log.Error(ex, "ERROR in PrepareParameterizedUpdateStatement(): " + ex.Message);
+                    if (OrmLiteConfig.ThrowOnError)
+                        throw;
                 }
             }
 
@@ -925,7 +1127,9 @@ namespace ServiceStack.OrmLite
                 }
                 catch (Exception ex)
                 {
-                    OrmLiteUtils.HandleException(ex, "ERROR in PrepareParameterizedDeleteStatement(): " + ex.Message);
+                    Log.Error(ex, "ERROR in PrepareParameterizedDeleteStatement(): " + ex.Message);
+                    if (OrmLiteConfig.ThrowOnError)
+                        throw;
                 }
             }
 
@@ -1134,7 +1338,9 @@ namespace ServiceStack.OrmLite
                 }
                 catch (Exception ex)
                 {
-                    OrmLiteUtils.HandleException(ex, "ERROR in ToUpdateRowStatement(): " + ex.Message);
+                    Log.Error(ex, "ERROR in ToUpdateRowStatement(): " + ex.Message);
+                    if (OrmLiteConfig.ThrowOnError)
+                        throw;
                 }
             }
 
@@ -1171,7 +1377,9 @@ namespace ServiceStack.OrmLite
                 }
                 catch (Exception ex)
                 {
-                    OrmLiteUtils.HandleException(ex, "ERROR in PrepareUpdateRowStatement(cmd,args): " + ex.Message);
+                    Log.Error(ex, "ERROR in PrepareUpdateRowStatement(cmd,args): " + ex.Message);
+                    if (OrmLiteConfig.ThrowOnError)
+                        throw;
                 }
             }
 
@@ -1222,7 +1430,9 @@ namespace ServiceStack.OrmLite
                 }
                 catch (Exception ex)
                 {
-                    OrmLiteUtils.HandleException(ex, "ERROR in PrepareUpdateRowAddStatement(): " + ex.Message);
+                    Log.Error(ex, "ERROR in PrepareUpdateRowAddStatement(): " + ex.Message);
+                    if (OrmLiteConfig.ThrowOnError)
+                        throw;
                 }
             }
 
@@ -1302,6 +1512,10 @@ namespace ServiceStack.OrmLite
         public static IEnumerable<FieldDefinition> GetFieldDefinitions(ModelDefinition modelDef) => modelDef.FieldDefinitions.OrderBy(fd=>fd.Order);
 
         public abstract string ToCreateSchemaStatement(string schemaName);
+
+        public virtual List<string> GetSchemas(IDbCommand dbCmd) => new() { "default" };
+
+        public virtual Dictionary<string, List<string>> GetSchemaTables(IDbCommand dbCmd) => new();
 
         public abstract bool DoesSchemaExist(IDbCommand dbCmd, string schemaName);
 
@@ -1481,7 +1695,7 @@ namespace ServiceStack.OrmLite
             return DoesColumnExist(db, columnName, tableName, schema).InTask();
         }
 
-        public virtual bool DoesSequenceExist(IDbCommand dbCmd, string sequenceName)
+        public virtual bool DoesSequenceExist(IDbCommand dbCmd, string sequence)
         {
             throw new NotImplementedException();
         }
@@ -1531,6 +1745,10 @@ namespace ServiceStack.OrmLite
             return "";
         }
 
+        public virtual string ToCreateSavePoint(string name) => $"SAVEPOINT {name}";
+        public virtual string ToReleaseSavePoint(string name) => $"RELEASE SAVEPOINT {name}";
+        public virtual string ToRollbackSavePoint(string name) => $"ROLLBACK TO SAVEPOINT {name}";
+
         public virtual List<string> SequenceList(Type tableType) => new List<string>();
 
         public virtual Task<List<string>> SequenceListAsync(Type tableType, CancellationToken token = default) => new List<string>().InTask();
@@ -1555,15 +1773,9 @@ namespace ServiceStack.OrmLite
         }
 
         // TODO : make abstract  ??
-        public virtual string ToExecuteProcedureStatement(object objWithProperties)
-        {
-            return null;
-        }
+        public virtual string ToExecuteProcedureStatement(object objWithProperties) => null;
 
-        protected static ModelDefinition GetModel(Type modelType)
-        {
-            return modelType.GetModelDefinition();
-        }
+        protected static ModelDefinition GetModel(Type modelType) => modelType.GetModelDefinition();
 
         public virtual SqlExpression<T> SqlExpression<T>()
         {
@@ -1575,28 +1787,19 @@ namespace ServiceStack.OrmLite
             throw new NotImplementedException();
         }
 
-        public virtual string GetDropForeignKeyConstraints(ModelDefinition modelDef)
-        {
-            return null;
-        }
+        public virtual string GetDropForeignKeyConstraints(ModelDefinition modelDef) => null;
 
-        public virtual string ToAddColumnStatement(Type modelType, FieldDefinition fieldDef)
-        {
-            var column = GetColumnDefinition(fieldDef);
-            return $"ALTER TABLE {GetQuotedTableName(modelType.GetModelDefinition())} ADD COLUMN {column};";
-        }
+        public virtual string ToAddColumnStatement(string schema, string table, FieldDefinition fieldDef) => 
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} ADD COLUMN {GetColumnDefinition(fieldDef)};";
 
-        public virtual string ToAlterColumnStatement(Type modelType, FieldDefinition fieldDef)
-        {
-            var column = GetColumnDefinition(fieldDef);
-            return $"ALTER TABLE {GetQuotedTableName(modelType.GetModelDefinition())} MODIFY COLUMN {column};";
-        }
+        public virtual string ToAlterColumnStatement(string schema, string table, FieldDefinition fieldDef) => 
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} MODIFY COLUMN {GetColumnDefinition(fieldDef)};";
+        
+        public virtual string ToChangeColumnNameStatement(string schema, string table, FieldDefinition fieldDef, string oldColumn) => 
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} CHANGE COLUMN {GetQuotedColumnName(oldColumn)} {GetColumnDefinition(fieldDef)};";
 
-        public virtual string ToChangeColumnNameStatement(Type modelType, FieldDefinition fieldDef, string oldColumnName)
-        {
-            var column = GetColumnDefinition(fieldDef);
-            return $"ALTER TABLE {GetQuotedTableName(modelType.GetModelDefinition())} CHANGE COLUMN {GetQuotedColumnName(oldColumnName)} {column};";
-        }
+        public virtual string ToRenameColumnStatement(string schema, string table, string oldColumn, string newColumn) => 
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} RENAME COLUMN {GetQuotedColumnName(oldColumn)} TO {GetQuotedColumnName(newColumn)};";
 
         public virtual string ToAddForeignKeyStatement<T, TForeign>(Expression<Func<T, object>> field,
             Expression<Func<TForeign, object>> foreignField,
@@ -1621,6 +1824,9 @@ namespace ServiceStack.OrmLite
                    $"{GetForeignKeyOnDeleteClause(new ForeignKeyConstraint(typeof(T), onDelete: FkOptionToString(onDelete)))}" +
                    $"{GetForeignKeyOnUpdateClause(new ForeignKeyConstraint(typeof(T), onUpdate: FkOptionToString(onUpdate)))};";
         }
+
+        public virtual string ToDropForeignKeyStatement(string schema, string table, string foreignKeyName) =>
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} DROP CONSTRAINT {GetQuotedName(foreignKeyName)};";
 
         public virtual string ToCreateIndexStatement<T>(Expression<Func<T, object>> field, string indexName = null, bool unique = false)
         {
@@ -1696,25 +1902,12 @@ namespace ServiceStack.OrmLite
             return subSql;
         }
 
-        public virtual string ToRowCountStatement(string innerSql)
-        {
-            return $"SELECT COUNT(*) FROM ({innerSql}) AS COUNT";
-        }
+        public virtual string ToRowCountStatement(string innerSql) => 
+            $"SELECT COUNT(*) FROM ({innerSql}) AS COUNT";
 
-        public virtual void DropColumn(IDbConnection db, Type modelType, string columnName)
-        {
-            var provider = db.GetDialectProvider();
-            var command = ToDropColumnStatement(modelType, columnName, provider);
+        public virtual string ToDropColumnStatement(string schema, string table, string column) => 
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} DROP COLUMN {GetQuotedColumnName(column)};";
 
-            db.ExecuteSql(command);
-        }
-
-        protected virtual string ToDropColumnStatement(Type modelType, string columnName, IOrmLiteDialectProvider provider)
-        {
-            return $"ALTER TABLE {provider.GetQuotedTableName(modelType.GetModelDefinition())} " +
-                   $"DROP COLUMN {provider.GetQuotedColumnName(columnName)};";
-        }
-        
         public virtual string ToTableNamesStatement(string schema) => throw new NotSupportedException();
 
         public virtual string ToTableNamesWithRowCountsStatement(bool live, string schema) => null; //returning null Fallsback to slow UNION N+1 COUNT(*) op

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 using Funq;
@@ -231,11 +232,8 @@ public abstract class JwtAuthProviderTests
     public const string Username = "mythz";
     public const string Password = "p@55word";
 
-    class AppHost : AppSelfHostBase
+    class AppHost() : AppSelfHostBase(nameof(JwtAuthProviderTests), typeof(JwtServices).Assembly)
     {
-        public AppHost()
-            : base(nameof(JwtAuthProviderTests), typeof(JwtServices).Assembly) { }
-
         public virtual JwtAuthProvider JwtAuthProvider { get; set; }
 
         public override void Configure(Container container)
@@ -664,6 +662,43 @@ public abstract class JwtAuthProviderTests
         jwtProvider.Audience = null;
         Assert.That(jwtProvider.IsJwtValid(jwtPartialAudienceMatch));
     }
+
+    [Test]
+    public void Can_handle_roles_with_spaces()
+    {
+        var jwtProvider = (JwtAuthProvider)AuthenticateService.GetAuthProvider(JwtAuthProviderReader.Name);
+        var header = JwtAuthProvider.CreateJwtHeader(jwtProvider.HashAlgorithm);
+        var roles = new[] { "Super Admin" }; 
+        var perms = new[] { "Perm", "The Perm", "Super Perm"}; 
+        var body = JwtAuthProvider.CreateJwtPayload(new AuthUserSession
+            {
+                UserAuthId = "1",
+                DisplayName = "Test",
+                Email = "as@if.com",
+                IsAuthenticated = true,
+            },
+            issuer: jwtProvider.Issuer,
+            expireIn: jwtProvider.ExpireTokensIn,
+            roles:roles,
+            permissions:perms);
+
+        var jwtToken = JwtAuthProvider.CreateJwt(header, body, jwtProvider.GetHashAlgorithm());
+        JwtAuthProvider.Dump(jwtToken).Print();
+
+        var payload = JwtAuthProvider.ExtractPayload(jwtToken);
+        Assert.That(payload[JwtClaimTypes.Roles], Is.EquivalentTo(roles));
+        Assert.That(payload[JwtClaimTypes.Permissions], Is.EquivalentTo(perms));
+        
+        var jsonObj = jwtProvider.GetVerifiedJwtPayload(jwtToken);
+        Assert.That(jsonObj.GetUnescaped(JwtClaimTypes.Roles), Is.EquivalentTo("[\"Super Admin\"]"));
+        Assert.That(jsonObj.GetUnescaped(JwtClaimTypes.Permissions), Is.EquivalentTo("[\"Perm\",\"The Perm\",\"Super Perm\"]"));
+
+        var session = new AuthUserSession();
+        session.PopulateFromMap(jsonObj);
+        Assert.That(session.Roles, Is.EquivalentTo(roles));
+        Assert.That(session.Permissions, Is.EquivalentTo(perms));
+    }
+
 }
     
 public class JwtAuthProviderIntegrationTests

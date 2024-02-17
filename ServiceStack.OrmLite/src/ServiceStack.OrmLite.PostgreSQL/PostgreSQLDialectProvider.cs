@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Data;
+using System.Data.Common;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -11,7 +12,9 @@ using System.Threading.Tasks;
 using Npgsql;
 using Npgsql.TypeMapping;
 using NpgsqlTypes;
+using ServiceStack.Data;
 using ServiceStack.DataAnnotations;
+using ServiceStack.Logging;
 using ServiceStack.OrmLite.Converters;
 using ServiceStack.OrmLite.PostgreSQL.Converters;
 using ServiceStack.OrmLite.Support;
@@ -73,10 +76,14 @@ namespace ServiceStack.OrmLite.PostgreSQL
             
             RegisterConverter<XmlValue>(new PostgreSqlXmlConverter());
 
-#if NET6_0
+#if NET6_0_OR_GREATER
             AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
             AppContext.SetSwitch("Npgsql.EnableLegacyCaseInsensitiveDbParameters", true);
             RegisterConverter<DateOnly>(new PostgreSqlDateOnlyConverter());
+#endif
+            
+#if NET472
+            AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 #endif
 
             this.Variables = new Dictionary<string, string>
@@ -286,6 +293,135 @@ namespace ServiceStack.OrmLite.PostgreSQL
                    sql.StartsWith("WITH ", StringComparison.OrdinalIgnoreCase);
         }
 
+        public override void BulkInsert<T>(IDbConnection db, IEnumerable<T> objs, BulkInsertConfig config = null)
+        {
+            config ??= new();
+            if (config.Mode == BulkInsertMode.Sql)
+            {
+                base.BulkInsert(db, objs, config);
+                return;
+            }
+	        
+            var pgConn = (NpgsqlConnection)db.ToDbConnection();
+	        
+            var modelDef = ModelDefinition<T>.Definition;
+
+            var sb = StringBuilderCache.Allocate()
+                .Append($"COPY {GetTableName(modelDef)} (");
+            
+            var fieldDefs = GetInsertFieldDefinitions(modelDef, insertFields:config.InsertFields);
+            var i = 0;
+            foreach (var fieldDef in fieldDefs)
+            {
+                if (ShouldSkipInsert(fieldDef) && !fieldDef.AutoId)
+                    continue;
+
+                if (i++ > 0)
+                    sb.Append(",");
+
+                sb.Append(NamingStrategy.GetColumnName(fieldDef.FieldName));
+            }
+            sb.Append(") FROM STDIN (FORMAT BINARY)");
+
+            var copyCmd = StringBuilderCache.ReturnAndFree(sb);
+            using var writer = pgConn.BeginBinaryImport(copyCmd);
+
+            foreach (var obj in objs)
+            {
+                writer.StartRow();
+                foreach (var fieldDef in fieldDefs)
+                {
+                    if (ShouldSkipInsert(fieldDef) && !fieldDef.AutoId)
+                        continue;
+
+                    var value = fieldDef.AutoId
+                        ? GetInsertDefaultValue(fieldDef)
+                        : fieldDef.GetValue(obj);
+
+                    var converter = GetConverterBestMatch(fieldDef);
+                    var dbValue = converter.ToDbValue(fieldDef.FieldType, value);
+                    if (dbValue is float f)
+                        dbValue = (double)f;
+
+                    if (dbValue is null or DBNull)
+                    {
+                        writer.WriteNull();
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var dbType = GetNpgsqlDbType(fieldDef);
+                            if (dbType == NpgsqlDbType.Text && dbValue is not string && dbValue is not char)
+                            {
+                                dbValue = StringSerializer.SerializeToString(dbValue);
+                            } 
+                            writer.Write(dbValue, dbType);
+                        }
+                        catch (Exception e)
+                        {
+                            LogManager.GetLogger(GetType()).Error(e.Message, e);
+                            throw;
+                        }
+                    }
+                }
+            }
+            writer.Complete();
+        }
+
+        public NpgsqlDbType GetNpgsqlDbType(FieldDefinition fieldDef)
+        {
+            var converter = GetConverterBestMatch(fieldDef);
+
+            var columnDef = fieldDef.CustomFieldDefinition ?? converter.ColumnDefinition;
+            return columnDef switch
+            {
+                "json" => NpgsqlDbType.Json,
+                "jsonb" => NpgsqlDbType.Jsonb,
+                "hstore" => NpgsqlDbType.Hstore,
+                "text[]" => NpgsqlDbType.Array | NpgsqlDbType.Text,
+                "short[]" => NpgsqlDbType.Array | NpgsqlDbType.Smallint,
+                "integer[]" => NpgsqlDbType.Array | NpgsqlDbType.Integer,
+                "bigint[]" => NpgsqlDbType.Array | NpgsqlDbType.Bigint,
+                "real[]" => NpgsqlDbType.Array | NpgsqlDbType.Real,
+                "double precision[]" => NpgsqlDbType.Array | NpgsqlDbType.Double,
+                "double numeric[]" => NpgsqlDbType.Array | NpgsqlDbType.Numeric,
+                "timestamp[]" => NpgsqlDbType.Array | NpgsqlDbType.Timestamp,
+                "timestamp with time zone[]" => NpgsqlDbType.Array | NpgsqlDbType.TimestampTz,
+                _ => converter.DbType switch
+                {
+                    DbType.Boolean => NpgsqlDbType.Boolean,
+                    DbType.SByte => NpgsqlDbType.Smallint,
+                    DbType.UInt16 => NpgsqlDbType.Smallint,
+                    DbType.Byte => NpgsqlDbType.Integer,
+                    DbType.Int16 => NpgsqlDbType.Integer,
+                    DbType.Int32 => NpgsqlDbType.Integer,
+                    DbType.UInt32 => NpgsqlDbType.Integer,
+                    DbType.Int64 => NpgsqlDbType.Bigint,
+                    DbType.UInt64 => NpgsqlDbType.Bigint,
+                    DbType.Single => NpgsqlDbType.Double,
+                    DbType.Double => NpgsqlDbType.Double,
+                    DbType.Decimal => NpgsqlDbType.Numeric,
+                    DbType.VarNumeric => NpgsqlDbType.Numeric,
+                    DbType.Currency => NpgsqlDbType.Money,
+                    DbType.Guid => NpgsqlDbType.Uuid,
+                    DbType.String => NpgsqlDbType.Text,
+                    DbType.AnsiString => NpgsqlDbType.Text,
+                    DbType.StringFixedLength => NpgsqlDbType.Text,
+                    DbType.AnsiStringFixedLength => NpgsqlDbType.Text,
+                    DbType.Xml => NpgsqlDbType.Text,
+                    DbType.Object => NpgsqlDbType.Text,
+                    DbType.Binary => NpgsqlDbType.Bytea,
+                    DbType.DateTime => NpgsqlDbType.TimestampTz,
+                    DbType.DateTimeOffset => NpgsqlDbType.TimestampTz,
+                    DbType.DateTime2 => NpgsqlDbType.Timestamp,
+                    DbType.Date => NpgsqlDbType.Date,
+                    DbType.Time => NpgsqlDbType.Time,
+                    _ => throw new AggregateException($"Unknown NpgsqlDbType for {fieldDef.FieldType} {fieldDef.Name}")
+                }
+            };
+        }
+        
         protected override bool ShouldSkipInsert(FieldDefinition fieldDef) => 
             fieldDef.ShouldSkipInsert() || fieldDef.AutoId;
 
@@ -463,6 +599,18 @@ namespace ServiceStack.OrmLite.PostgreSQL
             return sql;
         }
 
+        public override List<string> GetSchemas(IDbCommand dbCmd)
+        {
+            var sql = "SELECT DISTINCT TABLE_SCHEMA FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema', 'pg_catalog')";
+            return dbCmd.SqlColumn<string>(sql);
+        }
+
+        public override Dictionary<string, List<string>> GetSchemaTables(IDbCommand dbCmd)
+        {
+            var sql = "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema', 'pg_catalog')";
+            return dbCmd.Lookup<string, string>(sql);
+        }
+
         public override bool DoesSchemaExist(IDbCommand dbCmd, string schemaName)
         {
             dbCmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = '{GetSchemaName(schemaName).SqlParam()}');";
@@ -545,10 +693,10 @@ namespace ServiceStack.OrmLite.PostgreSQL
             return sql;
         }
 
-        public override string ToAlterColumnStatement(Type modelType, FieldDefinition fieldDef)
+        public override string ToAlterColumnStatement(string schema, string table, FieldDefinition fieldDef)
         {
             var columnDefinition = GetColumnDefinition(fieldDef);
-            var modelName = GetQuotedTableName(GetModel(modelType));
+            var modelName = GetQuotedTableName(table, schema);
 
             var parts = columnDefinition.SplitOnFirst(' ');
             var columnName = parts[0];
@@ -621,7 +769,7 @@ namespace ServiceStack.OrmLite.PostgreSQL
             return "; " + SelectIdentitySql;
         }
         
-        public Dictionary<Type,NpgsqlDbType> TypesMap { get; } = new Dictionary<Type, NpgsqlDbType>
+        public Dictionary<Type,NpgsqlDbType> TypesMap { get; } = new()
         {
             [typeof(bool)] = NpgsqlDbType.Boolean,
             [typeof(short)] = NpgsqlDbType.Smallint,
@@ -649,11 +797,13 @@ namespace ServiceStack.OrmLite.PostgreSQL
             [typeof(PhysicalAddress)] = NpgsqlDbType.MacAddr,
             [typeof(NpgsqlTsQuery)] = NpgsqlDbType.TsQuery,
             [typeof(NpgsqlTsVector)] = NpgsqlDbType.TsVector,
-            [typeof(NpgsqlDate)] = NpgsqlDbType.Date,
+#if NET6_0_OR_GREATER
+            [typeof(DateOnly)] = NpgsqlDbType.Date,
+            [typeof(TimeOnly)] = NpgsqlDbType.Time,  
+#endif
             [typeof(DateTime)] = NpgsqlDbType.Timestamp,
             [typeof(DateTimeOffset)] = NpgsqlDbType.TimestampTz,
             [typeof(TimeSpan)] = NpgsqlDbType.Time,
-            [typeof(NpgsqlTimeSpan)] = NpgsqlDbType.Time,
             [typeof(byte[])] = NpgsqlDbType.Bytea,
             [typeof(uint)] = NpgsqlDbType.Oid,
             [typeof(uint[])] = NpgsqlDbType.Oidvector,
@@ -671,7 +821,8 @@ namespace ServiceStack.OrmLite.PostgreSQL
             throw new NotSupportedException($"Type '{type.Name}' not found in 'TypesMap'");
         }
         
-        public Dictionary<string, NpgsqlDbType> NativeTypes = new Dictionary<string, NpgsqlDbType> {
+        public Dictionary<string, NpgsqlDbType> NativeTypes = new()
+        {
             { "json", NpgsqlDbType.Json },
             { "jsonb", NpgsqlDbType.Jsonb },
             { "hstore", NpgsqlDbType.Hstore },
@@ -734,6 +885,20 @@ namespace ServiceStack.OrmLite.PostgreSQL
             SetParameterValues<T>(cmd, obj);
         }
 
+        public override string ToChangeColumnNameStatement(string schema, string table, FieldDefinition fieldDef, string oldColumn)
+        {
+            //var column = GetColumnDefinition(fieldDef);
+            var columnType = GetColumnTypeDefinition(fieldDef.ColumnType, fieldDef.FieldLength, fieldDef.Scale);
+            var newColumnName = NamingStrategy.GetColumnName(fieldDef.FieldName);
+
+            var sql = $"ALTER TABLE {GetQuotedTableName(table, schema)} " +
+                      $"ALTER COLUMN {GetQuotedColumnName(oldColumn)} TYPE {columnType}";
+            sql += newColumnName != oldColumn
+                ? $", RENAME COLUMN {GetQuotedColumnName(oldColumn)} TO {GetQuotedColumnName(newColumnName)};"
+                : ";";
+            return sql;
+        }
+
         public override string SqlConflict(string sql, string conflictResolution)
         {
             //https://www.postgresql.org/docs/current/static/sql-insert.html
@@ -753,20 +918,11 @@ namespace ServiceStack.OrmLite.PostgreSQL
 
         public override string SqlRandom => "RANDOM()";
 
-        protected NpgsqlConnection Unwrap(IDbConnection db)
-        {
-            return (NpgsqlConnection)db.ToDbConnection();
-        }
+        protected DbConnection Unwrap(IDbConnection db) => (DbConnection)db.ToDbConnection();
 
-        protected NpgsqlCommand Unwrap(IDbCommand cmd)
-        {
-            return (NpgsqlCommand)cmd.ToDbCommand();
-        }
+        protected DbCommand Unwrap(IDbCommand cmd) => (DbCommand)cmd.ToDbCommand();
 
-        protected NpgsqlDataReader Unwrap(IDataReader reader)
-        {
-            return (NpgsqlDataReader)reader;
-        }
+        protected DbDataReader Unwrap(IDataReader reader) => (DbDataReader)reader;
 
 #if ASYNC
         public override Task OpenAsync(IDbConnection db, CancellationToken token = default)

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace ServiceStack;
 
@@ -42,13 +43,16 @@ public class InputAttributeBase : MetadataAttributeBase
     public string Autofocus  { get; set; }
     public string Min { get; set; }
     public string Max { get; set; }
-    public int Step { get; set; } = int.MinValue;
+    public string Step { get; set; }
     public int MinLength { get; set; } = int.MinValue;
     public int MaxLength { get; set; } = int.MinValue;
     public string Accept  { get; set; }
     public string Capture  { get; set; }
     public bool Multiple { get; set; }
     public string[] AllowableValues { get; set; }
+    public Type AllowableValuesEnum { get; set; }
     public string Options  { get; set; }
     public bool Ignore { get; set; }
+    public string EvalAllowableValues { get; set; }
+    public string EvalAllowableEntries { get; set; }
 }

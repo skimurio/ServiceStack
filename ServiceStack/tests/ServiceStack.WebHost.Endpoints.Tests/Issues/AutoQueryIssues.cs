@@ -66,23 +66,23 @@ namespace ServiceStack.WebHost.Endpoints.Tests.Issues
                     new MyValidators(), 
                 });
 
-                SetConfig(new HostConfig{ UseCamelCase = true});
+                SetConfig(new HostConfig {
+                    UseCamelCase = true,
+                });
                 var dbFactory = new OrmLiteConnectionFactory(":memory:", SqliteDialect.Provider);
                 //var dbFactory = new OrmLiteConnectionFactory(Tests.Config.SqlServerConnString, SqlServerDialect.Provider);
                 container.Register<IDbConnectionFactory>(dbFactory);
 
                 Plugins.Add(new AutoQueryFeature { MaxLimit = 100 });
 
-                using (var db = container.Resolve<IDbConnectionFactory>().Open())
-                {
-                    db.DropTable<Employee>();
-                    db.DropTable<Department>();
-                    db.CreateTable<Department>();
-                    db.CreateTable<Employee>();
+                using var db = container.Resolve<IDbConnectionFactory>().Open();
+                db.DropTable<Employee>();
+                db.DropTable<Department>();
+                db.CreateTable<Department>();
+                db.CreateTable<Employee>();
 
-                    db.InsertAll(SeedDepartments);
-                    db.InsertAll(SeedEmployees);
-                }
+                db.InsertAll(SeedDepartments);
+                db.InsertAll(SeedEmployees);
             }
         }
 

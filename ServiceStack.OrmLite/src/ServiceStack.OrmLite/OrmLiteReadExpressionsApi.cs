@@ -191,7 +191,7 @@ namespace ServiceStack.OrmLite
         /// </summary>
         public static IDbTransaction OpenTransaction(this IDbConnection dbConn)
         {
-            return new OrmLiteTransaction(dbConn, dbConn.BeginTransaction());
+            return OrmLiteTransaction.Create(dbConn);
         }
 
         /// <summary>
@@ -200,7 +200,7 @@ namespace ServiceStack.OrmLite
         public static IDbTransaction OpenTransactionIfNotExists(this IDbConnection dbConn)
         {
             return !dbConn.InTransaction()
-                ? new OrmLiteTransaction(dbConn, dbConn.BeginTransaction())
+                ? OrmLiteTransaction.Create(dbConn)
                 : null;
         }
 
@@ -209,7 +209,7 @@ namespace ServiceStack.OrmLite
         /// </summary>
         public static IDbTransaction OpenTransaction(this IDbConnection dbConn, IsolationLevel isolationLevel)
         {
-            return new OrmLiteTransaction(dbConn, dbConn.BeginTransaction(isolationLevel));
+            return OrmLiteTransaction.Create(dbConn, isolationLevel);
         }
 
         /// <summary>
@@ -218,8 +218,26 @@ namespace ServiceStack.OrmLite
         public static IDbTransaction OpenTransactionIfNotExists(this IDbConnection dbConn, IsolationLevel isolationLevel)
         {
             return !dbConn.InTransaction()
-                ? new OrmLiteTransaction(dbConn, dbConn.BeginTransaction(isolationLevel))
+                ? OrmLiteTransaction.Create(dbConn, isolationLevel)
                 : null;
+        }
+
+        public static SavePoint SavePoint(this IDbTransaction trans, string name)
+        {
+            if (trans is not OrmLiteTransaction dbTrans)
+                throw new ArgumentException($"{trans.GetType().Name} is not an OrmLiteTransaction. Use db.OpenTransaction() to Create OrmLite Transactions");
+            var savePoint = new SavePoint(dbTrans, name);
+            savePoint.Save();
+            return savePoint;
+        }
+
+        public static async Task<SavePoint> SavePointAsync(this IDbTransaction trans, string name)
+        {
+            if (trans is not OrmLiteTransaction dbTrans)
+                throw new ArgumentException($"{trans.GetType().Name} is not an OrmLiteTransaction. Use db.OpenTransaction() to Create OrmLite Transactions");
+            var savePoint = new SavePoint(dbTrans, name);
+            await savePoint.SaveAsync().ConfigAwait();
+            return savePoint;
         }
 
         /// <summary>

@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text;
 using System.Linq;
 using FirebirdSql.Data.FirebirdClient;
+using FirebirdSql.Data.Isql;
 using ServiceStack.DataAnnotations;
 using ServiceStack.OrmLite;
 using ServiceStack.OrmLite.Firebird.Converters;
@@ -30,6 +31,8 @@ namespace ServiceStack.OrmLite.Firebird
         public static FirebirdOrmLiteDialectProvider Instance = new FirebirdOrmLiteDialectProvider();
 
         internal long LastInsertId { get; set; }
+
+        public override bool SupportsSchema => false;
 
         public FirebirdOrmLiteDialectProvider() : this(false) { }
 
@@ -116,6 +119,43 @@ namespace ServiceStack.OrmLite.Firebird
             }
 
             return StringBuilderCache.ReturnAndFree(sql);
+        }
+
+        public override string ToInsertRowsSql<T>(IEnumerable<T> objs, ICollection<string> insertFields = null)
+        {
+            if (objs == null)
+                throw new ArgumentNullException(nameof(objs));
+        
+            var sb = new StringBuilder();
+            sb.AppendLine("set term ^ ;");
+            sb.AppendLine("EXECUTE BLOCK AS BEGIN");
+            foreach (var objWithProperties in objs)
+            {
+                var sql = ToInsertRowSql(objWithProperties, insertFields:insertFields);
+                sb.Append(sql);
+                if (!string.IsNullOrEmpty(sql))
+                    sb.Append(';');
+                sb.AppendLine();
+            }
+            sb.AppendLine("END^");
+            return sb.ToString();
+        }
+
+        public override void BulkInsert<T>(IDbConnection db, IEnumerable<T> objs, BulkInsertConfig config = null)
+        {
+            var firebirdDb = (FbConnection)db.ToDbConnection();
+
+            config ??= new();
+            var batchSize = Math.Min(config.BatchSize, 256); // Max Size
+            foreach (var batch in objs.BatchesOf(batchSize))
+            {
+                var sql = ToInsertRowsSql(batch, insertFields:config.InsertFields);
+                var fbScript = new FbScript(sql);
+                fbScript.Parse();
+                var fbe = new FbBatchExecution(firebirdDb);
+                fbe.AppendSqlStatements(fbScript);
+                fbe.Execute();
+            }
         }
 
         public override string ToInsertRowStatement(IDbCommand cmd, object objWithProperties, ICollection<string> insertFields = null)
@@ -767,25 +807,14 @@ namespace ServiceStack.OrmLite.Firebird
         }
 
         #region DDL
-        public override string ToAddColumnStatement(Type modelType, FieldDefinition fieldDef)
-        {
-            var column = GetColumnDefinition(fieldDef);
-            return $"ALTER TABLE {GetQuotedTableName(GetModel(modelType))} ADD {column} ;";
-        }
+        public override string ToAddColumnStatement(string schema, string table, FieldDefinition fieldDef) => 
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} ADD {GetColumnDefinition(fieldDef)};";
 
-        public override string ToAlterColumnStatement(Type modelType, FieldDefinition fieldDef)
-        {
-            var column = GetColumnDefinition(fieldDef);
-            return $"ALTER TABLE {GetQuotedTableName(GetModel(modelType))} ALTER {column} ;";
-        }
+        public override string ToAlterColumnStatement(string schema, string table, FieldDefinition fieldDef) => 
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} ALTER {GetColumnDefinition(fieldDef)};";
 
-        public override string ToChangeColumnNameStatement(Type modelType, FieldDefinition fieldDef, string oldColumnName)
-        {
-            return string.Format("ALTER TABLE {0} ALTER {1} TO {2};",
-                GetQuotedTableName(GetModel(modelType)),
-                GetQuotedColumnName(oldColumnName),
-                GetQuotedColumnName(fieldDef.FieldName));
-        }
+        public override string ToChangeColumnNameStatement(string schema, string table, FieldDefinition fieldDef, string oldColumn) => 
+            $"ALTER TABLE {GetQuotedTableName(GetQuotedTableName(table, schema))} ALTER {GetQuotedColumnName(oldColumn)} TO {GetQuotedColumnName(fieldDef.FieldName)};";
         #endregion DDL
 
         public override string ToSelectStatement(QueryType queryType, ModelDefinition modelDef,
@@ -820,16 +849,22 @@ namespace ServiceStack.OrmLite.Firebird
             return StringBuilderCache.ReturnAndFree(sb);
         }
 
-        public override void DropColumn(IDbConnection db, Type modelType, string columnName)
-        {
-            var provider = db.GetDialectProvider();
-            var command =
-                $"ALTER TABLE {provider.GetQuotedTableName(modelType.GetModelMetadata().ModelName)} DROP {provider.GetQuotedColumnName(columnName)};";
-
-            db.ExecuteSql(command);
-        }
+        public override string ToDropColumnStatement(string schema, string table, string column) =>
+            $"ALTER TABLE {GetQuotedTableName(table, schema)} DROP {GetQuotedColumnName(column)};";
 
         public override string SqlConcat(IEnumerable<object> args) => string.Join(" || ", args);
+
+  	public override string ToTableNamesStatement(string schema)
+        {
+            var sql = "SELECT TRIM(RDB$RELATION_NAME) AS TABLE_NAME FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 AND RDB$VIEW_BLR IS NULL";
+
+            if (!string.IsNullOrEmpty(schema))
+            {
+                sql += " AND TRIM(RDB$OWNER_NAME) = '{0}'".SqlFmt(this, schema);
+            }
+
+            return sql;
+        }
     }
 }
 

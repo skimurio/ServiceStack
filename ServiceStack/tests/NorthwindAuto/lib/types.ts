@@ -1,8 +1,8 @@
 import { ApiResult } from './client';
 
 /* Options:
-Date: 2022-03-31 17:50:09
-Version: 6.03
+Date: 2023-10-27 18:15:00
+Version: 6.111
 Tip: To override a DTO option, remove "//" prefix before updating
 BaseUrl: http://localhost:20000
 
@@ -38,11 +38,11 @@ export interface IHasBearerToken
     bearerToken: string;
 }
 
-export interface IPost
+export interface IGet
 {
 }
 
-export interface IGet
+export interface IPost
 {
 }
 
@@ -52,6 +52,34 @@ export interface IPut
 
 export interface IDelete
 {
+}
+
+export class ValidateRule
+{
+    public validator: string;
+    public condition: string;
+    public errorCode: string;
+    public message: string;
+
+    public constructor(init?: Partial<ValidateRule>) { (Object as any).assign(this, init); }
+}
+
+export class ValidationRule extends ValidateRule
+{
+    public id: number;
+    // @Required()
+    public type: string;
+
+    public field: string;
+    public createdBy: string;
+    public createdDate?: string;
+    public modifiedBy: string;
+    public modifiedDate?: string;
+    public suspendedBy: string;
+    public suspendedDate?: string;
+    public notes: string;
+
+    public constructor(init?: Partial<ValidationRule>) { super(init); (Object as any).assign(this, init); }
 }
 
 // @DataContract
@@ -145,6 +173,7 @@ export class CrudEvent
     public requestType: string;
 
     // @DataMember(Order=8)
+    // @StringLength(2147483647)
     public requestBody: string;
 
     // @DataMember(Order=9)
@@ -171,11 +200,24 @@ export class CrudEvent
     public constructor(init?: Partial<CrudEvent>) { (Object as any).assign(this, init); }
 }
 
+export class RedisEndpointInfo
+{
+    public host: string;
+    public port: number;
+    public ssl?: boolean;
+    public db: number;
+    public username: string;
+    public password: string;
+
+    public constructor(init?: Partial<RedisEndpointInfo>) { (Object as any).assign(this, init); }
+}
+
 export class AppInfo
 {
     public baseUrl: string;
     public serviceStackVersion: string;
     public serviceName: string;
+    public apiVersion: string;
     public serviceDescription: string;
     public serviceIconUrl: string;
     public brandUrl: string;
@@ -207,6 +249,8 @@ export class LinkInfo
     public href: string;
     public label: string;
     public icon: ImageInfo;
+    public show: string;
+    public hide: string;
 
     public constructor(init?: Partial<LinkInfo>) { (Object as any).assign(this, init); }
 }
@@ -255,6 +299,13 @@ export class ExplorerUi
     public constructor(init?: Partial<ExplorerUi>) { (Object as any).assign(this, init); }
 }
 
+export class AdminUi
+{
+    public css: ApiCss;
+
+    public constructor(init?: Partial<AdminUi>) { (Object as any).assign(this, init); }
+}
+
 export class FormatInfo
 {
     public method: string;
@@ -284,6 +335,7 @@ export class UiInfo
     public theme: ThemeInfo;
     public locode: LocodeUi;
     public explorer: ExplorerUi;
+    public admin: AdminUi;
     public defaultFormats: ApiFormat;
     public meta: { [index: string]: string; };
 
@@ -306,6 +358,7 @@ export class NavItem
     public id: string;
     public className: string;
     public iconClass: string;
+    public iconSrc: string;
     public show: string;
     public hide: string;
     public children: NavItem[];
@@ -342,11 +395,14 @@ export class InputInfo
     public autofocus: string;
     public min: string;
     public max: string;
-    public step?: number;
+    public step: string;
     public minLength?: number;
     public maxLength?: number;
+    public accept: string;
+    public capture: string;
+    public multiple?: boolean;
     public allowableValues: string[];
-    public allowableEntries: KeyValuePair<String,String>[];
+    public allowableEntries: KeyValuePair<string, string>[];
     public options: string;
     public ignore?: boolean;
     public css: FieldCss;
@@ -448,12 +504,25 @@ export class SharpPagesInfo
 
 export class RequestLogsInfo
 {
+    public accessRole: string;
     public requiredRoles: string[];
     public requestLogger: string;
+    public defaultLimit: number;
     public serviceRoutes: { [index: string]: string[]; };
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<RequestLogsInfo>) { (Object as any).assign(this, init); }
+}
+
+export class ProfilingInfo
+{
+    public accessRole: string;
+    public defaultLimit: number;
+    public summaryFields: string[];
+    public tagLabel?: string;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<ProfilingInfo>) { (Object as any).assign(this, init); }
 }
 
 export class FilesUploadLocation
@@ -521,6 +590,7 @@ export class RefInfo
     public selfId: string;
     public refId: string;
     public refLabel: string;
+    public queryApi: string;
 
     public constructor(init?: Partial<RefInfo>) { (Object as any).assign(this, init); }
 }
@@ -545,6 +615,7 @@ export class MetadataPropertyType
     public allowableMin?: number;
     public allowableMax?: number;
     public attributes: MetadataAttribute[];
+    public uploadTo: string;
     public input: InputInfo;
     public format: FormatInfo;
     public ref: RefInfo;
@@ -568,6 +639,7 @@ export class MetadataType
     public isEnumInt?: boolean;
     public isInterface?: boolean;
     public isAbstract?: boolean;
+    public isGenericTypeDef?: boolean;
     public dataContract: MetadataDataContract;
     public properties: MetadataPropertyType[];
     public attributes: MetadataAttribute[];
@@ -607,6 +679,44 @@ export class AdminUsersInfo
     public constructor(init?: Partial<AdminUsersInfo>) { (Object as any).assign(this, init); }
 }
 
+export class AdminRedisInfo
+{
+    public queryLimit: number;
+    public databases: number[];
+    public modifiableConnection?: boolean;
+    public endpoint: RedisEndpointInfo;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<AdminRedisInfo>) { (Object as any).assign(this, init); }
+}
+
+export class SchemaInfo
+{
+    public alias: string;
+    public name: string;
+    public tables: string[];
+
+    public constructor(init?: Partial<SchemaInfo>) { (Object as any).assign(this, init); }
+}
+
+export class DatabaseInfo
+{
+    public alias: string;
+    public name: string;
+    public schemas: SchemaInfo[];
+
+    public constructor(init?: Partial<DatabaseInfo>) { (Object as any).assign(this, init); }
+}
+
+export class AdminDatabaseInfo
+{
+    public queryLimit: number;
+    public databases: DatabaseInfo[];
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<AdminDatabaseInfo>) { (Object as any).assign(this, init); }
+}
+
 export class PluginInfo
 {
     public loaded: string[];
@@ -615,8 +725,11 @@ export class PluginInfo
     public validation: ValidationInfo;
     public sharpPages: SharpPagesInfo;
     public requestLogs: RequestLogsInfo;
+    public profiling: ProfilingInfo;
     public filesUpload: FilesUploadInfo;
     public adminUsers: AdminUsersInfo;
+    public adminRedis: AdminRedisInfo;
+    public adminDatabase: AdminDatabaseInfo;
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<PluginInfo>) { (Object as any).assign(this, init); }
@@ -643,6 +756,7 @@ export class MetadataTypesConfig
     public package: string;
     public addReturnMarker: boolean;
     public addDescriptionAsComments: boolean;
+    public addDocAnnotations: boolean;
     public addDataContractAttributes: boolean;
     public addIndexesToDataMembers: boolean;
     public addGeneratedCodeAttributes: boolean;
@@ -653,6 +767,7 @@ export class MetadataTypesConfig
     public addPropertyAccessors: boolean;
     public excludeGenericBaseTypes: boolean;
     public settersReturnThis: boolean;
+    public addNullableAnnotations: boolean;
     public makePropertiesOptional: boolean;
     public exportAsTypes: boolean;
     public excludeImplementedInterfaces: boolean;
@@ -664,6 +779,7 @@ export class MetadataTypesConfig
     public defaultImports: string[];
     public includeTypes: string[];
     public excludeTypes: string[];
+    public exportTags: string[];
     public treatTypesAsStrings: string[];
     public exportValueTypes: boolean;
     public globalNamespace: string;
@@ -730,6 +846,16 @@ export class MetadataTypes
     public constructor(init?: Partial<MetadataTypes>) { (Object as any).assign(this, init); }
 }
 
+export class ServerStats
+{
+    public redis: { [index: string]: number; };
+    public serverEvents: { [index: string]: string; };
+    public mqDescription: string;
+    public mqWorkers: { [index: string]: number; };
+
+    public constructor(init?: Partial<ServerStats>) { (Object as any).assign(this, init); }
+}
+
 // @DataContract
 export class ResponseError
 {
@@ -769,6 +895,87 @@ export class ResponseStatus
     public constructor(init?: Partial<ResponseStatus>) { (Object as any).assign(this, init); }
 }
 
+export class RequestLogEntry
+{
+    public id: number;
+    public traceId: string;
+    public operationName: string;
+    public dateTime: string;
+    public statusCode: number;
+    public statusDescription: string;
+    public httpMethod: string;
+    public absoluteUri: string;
+    public pathInfo: string;
+    // @StringLength(2147483647)
+    public requestBody: string;
+
+    public requestDto: Object;
+    public userAuthId: string;
+    public sessionId: string;
+    public ipAddress: string;
+    public forwardedFor: string;
+    public referer: string;
+    public headers: { [index: string]: string; };
+    public formData: { [index: string]: string; };
+    public items: { [index: string]: string; };
+    public responseHeaders: { [index: string]: string; };
+    public session: Object;
+    public responseDto: Object;
+    public errorResponse: Object;
+    public exceptionSource: string;
+    public exceptionData: any;
+    public requestDuration: string;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<RequestLogEntry>) { (Object as any).assign(this, init); }
+}
+
+export class DiagnosticEntry
+{
+    public id: number;
+    public traceId?: string;
+    public source: string;
+    public eventType: string;
+    public message: string;
+    public operation: string;
+    public threadId: number;
+    public error?: ResponseStatus;
+    public commandType: string;
+    public command: string;
+    public userAuthId?: string;
+    public sessionId?: string;
+    public arg?: string;
+    public args?: string[];
+    public argLengths?: number[];
+    public namedArgs?: { [index: string]: Object; };
+    public duration?: string;
+    public timestamp: number;
+    public date: string;
+    public tag?: string;
+    public stackTrace?: string;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<DiagnosticEntry>) { (Object as any).assign(this, init); }
+}
+
+export class RedisSearchResult
+{
+    public id: string;
+    public type: string;
+    public ttl: number;
+    public size: number;
+
+    public constructor(init?: Partial<RedisSearchResult>) { (Object as any).assign(this, init); }
+}
+
+export class RedisText
+{
+    public text: string;
+    public children: RedisText[];
+
+    public constructor(init?: Partial<RedisText>) { (Object as any).assign(this, init); }
+}
+
 export class KeyValuePair<TKey, TValue>
 {
     public key: TKey;
@@ -779,6 +986,7 @@ export class KeyValuePair<TKey, TValue>
 
 export class AppMetadata
 {
+    public date: string;
     public app: AppInfo;
     public ui: UiInfo;
     public config: ConfigInfo;
@@ -790,6 +998,26 @@ export class AppMetadata
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<AppMetadata>) { (Object as any).assign(this, init); }
+}
+
+export class AdminDashboardResponse
+{
+    public serverStats: ServerStats;
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<AdminDashboardResponse>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class GetValidationRulesResponse
+{
+    // @DataMember(Order=1)
+    public results: ValidationRule[];
+
+    // @DataMember(Order=2)
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<GetValidationRulesResponse>) { (Object as any).assign(this, init); }
 }
 
 // @DataContract
@@ -913,7 +1141,7 @@ export class AdminDeleteUserResponse
 }
 
 // @DataContract
-export class QueryResponse<T>
+export class QueryResponse<CrudEvent>
 {
     // @DataMember(Order=1)
     public offset: number;
@@ -922,7 +1150,7 @@ export class QueryResponse<T>
     public total: number;
 
     // @DataMember(Order=3)
-    public results: T[];
+    public results: CrudEvent[];
 
     // @DataMember(Order=4)
     public meta: { [index: string]: string; };
@@ -930,34 +1158,135 @@ export class QueryResponse<T>
     // @DataMember(Order=5)
     public responseStatus: ResponseStatus;
 
-    public constructor(init?: Partial<QueryResponse<T>>) { (Object as any).assign(this, init); }
+    public constructor(init?: Partial<QueryResponse<CrudEvent>>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class RequestLogsResponse
+{
+    // @DataMember(Order=1)
+    public results: RequestLogEntry[];
+
+    // @DataMember(Order=2)
+    public usage: { [index: string]: string; };
+
+    // @DataMember(Order=3)
+    public total: number;
+
+    // @DataMember(Order=4)
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<RequestLogsResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminProfilingResponse
+{
+    public results: DiagnosticEntry[];
+    public total: number;
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<AdminProfilingResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminRedisResponse
+{
+    public db: number;
+    public searchResults?: RedisSearchResult[];
+    public info?: { [index: string]: string; };
+    public endpoint?: RedisEndpointInfo;
+    public result?: RedisText;
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<AdminRedisResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminDatabaseResponse
+{
+    public results: { [index:string]: Object; }[];
+    public total?: number;
+    public columns?: MetadataPropertyType[];
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<AdminDatabaseResponse>) { (Object as any).assign(this, init); }
 }
 
 // @Route("/metadata/app")
 // @DataContract
-export class MetadataApp implements IReturn<AppMetadata>
+export class MetadataApp implements IReturn<AppMetadata>, IGet
 {
     // @DataMember(Order=1)
     public view: string;
 
+    // @DataMember(Order=2)
+    public includeTypes: string[];
+
     public constructor(init?: Partial<MetadataApp>) { (Object as any).assign(this, init); }
     public getTypeName() { return 'MetadataApp'; }
-    public getMethod() { return 'POST'; }
+    public getMethod() { return 'GET'; }
     public createResponse() { return new AppMetadata(); }
 }
 
-/**
-* Sign In
-*/
+export class AdminDashboard implements IReturn<AdminDashboardResponse>
+{
+
+    public constructor(init?: Partial<AdminDashboard>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminDashboard'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new AdminDashboardResponse(); }
+}
+
+// @Route("/validation/rules/{Type}")
+// @DataContract
+export class GetValidationRules implements IReturn<GetValidationRulesResponse>
+{
+    // @DataMember(Order=1)
+    public authSecret: string;
+
+    // @DataMember(Order=2)
+    public type: string;
+
+    public constructor(init?: Partial<GetValidationRules>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'GetValidationRules'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new GetValidationRulesResponse(); }
+}
+
+// @Route("/validation/rules")
+// @DataContract
+export class ModifyValidationRules implements IReturnVoid
+{
+    // @DataMember(Order=1)
+    public authSecret: string;
+
+    // @DataMember(Order=2)
+    public saveRules: ValidationRule[];
+
+    // @DataMember(Order=3)
+    public deleteRuleIds: number[];
+
+    // @DataMember(Order=4)
+    public suspendRuleIds: number[];
+
+    // @DataMember(Order=5)
+    public unsuspendRuleIds: number[];
+
+    // @DataMember(Order=6)
+    public clearCache?: boolean;
+
+    public constructor(init?: Partial<ModifyValidationRules>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'ModifyValidationRules'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() {}
+}
+
+/** @description Sign In */
 // @Route("/auth", "OPTIONS,GET,POST,DELETE")
 // @Route("/auth/{provider}", "OPTIONS,GET,POST,DELETE")
 // @Api(Description="Sign In")
 // @DataContract
 export class Authenticate implements IReturn<AuthenticateResponse>, IPost
 {
-    /**
-    * AuthProvider, e.g. credentials
-    */
+    /** @description AuthProvider, e.g. credentials */
     // @DataMember(Order=1)
     public provider: string;
 
@@ -1010,6 +1339,9 @@ export class Authenticate implements IReturn<AuthenticateResponse>, IPost
     public scope: string;
 
     // @DataMember(Order=20)
+    public returnUrl: string;
+
+    // @DataMember(Order=21)
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<Authenticate>) { (Object as any).assign(this, init); }
@@ -1171,6 +1503,135 @@ export class GetCrudEvents extends QueryDb<CrudEvent> implements IReturn<QueryRe
     public createResponse() { return new QueryResponse<CrudEvent>(); }
 }
 
+// @Route("/requestlogs")
+// @DataContract
+export class RequestLogs implements IReturn<RequestLogsResponse>
+{
+    // @DataMember(Order=1)
+    public beforeSecs?: number;
+
+    // @DataMember(Order=2)
+    public afterSecs?: number;
+
+    // @DataMember(Order=3)
+    public operationName: string;
+
+    // @DataMember(Order=4)
+    public ipAddress: string;
+
+    // @DataMember(Order=5)
+    public forwardedFor: string;
+
+    // @DataMember(Order=6)
+    public userAuthId: string;
+
+    // @DataMember(Order=7)
+    public sessionId: string;
+
+    // @DataMember(Order=8)
+    public referer: string;
+
+    // @DataMember(Order=9)
+    public pathInfo: string;
+
+    // @DataMember(Order=10)
+    public ids: number[];
+
+    // @DataMember(Order=11)
+    public beforeId?: number;
+
+    // @DataMember(Order=12)
+    public afterId?: number;
+
+    // @DataMember(Order=13)
+    public hasResponse?: boolean;
+
+    // @DataMember(Order=14)
+    public withErrors?: boolean;
+
+    // @DataMember(Order=15)
+    public enableSessionTracking?: boolean;
+
+    // @DataMember(Order=16)
+    public enableResponseTracking?: boolean;
+
+    // @DataMember(Order=17)
+    public enableErrorTracking?: boolean;
+
+    // @DataMember(Order=18)
+    public durationLongerThan?: string;
+
+    // @DataMember(Order=19)
+    public durationLessThan?: string;
+
+    // @DataMember(Order=20)
+    public skip: number;
+
+    // @DataMember(Order=21)
+    public take?: number;
+
+    // @DataMember(Order=22)
+    public orderBy: string;
+
+    public constructor(init?: Partial<RequestLogs>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'RequestLogs'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new RequestLogsResponse(); }
+}
+
+export class AdminProfiling implements IReturn<AdminProfilingResponse>
+{
+    public source?: string;
+    public eventType?: string;
+    public threadId?: number;
+    public traceId?: string;
+    public userAuthId?: string;
+    public sessionId?: string;
+    public tag?: string;
+    public skip: number;
+    public take?: number;
+    public orderBy?: string;
+    public withErrors?: boolean;
+    public pending?: boolean;
+
+    public constructor(init?: Partial<AdminProfiling>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminProfiling'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new AdminProfilingResponse(); }
+}
+
+export class AdminRedis implements IReturn<AdminRedisResponse>, IPost
+{
+    public db?: number;
+    public query?: string;
+    public reconnect?: RedisEndpointInfo;
+    public take?: number;
+    public position?: number;
+    public args?: string[];
+
+    public constructor(init?: Partial<AdminRedis>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminRedis'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new AdminRedisResponse(); }
+}
+
+export class AdminDatabase implements IReturn<AdminDatabaseResponse>, IGet
+{
+    public db?: string;
+    public schema?: string;
+    public table?: string;
+    public fields?: string[];
+    public take?: number;
+    public skip?: number;
+    public orderBy?: string;
+    public include?: string;
+
+    public constructor(init?: Partial<AdminDatabase>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminDatabase'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new AdminDatabaseResponse(); }
+}
+
 
 
 /**
@@ -1232,7 +1693,7 @@ export type App = {
     unsubscribe: () => void;
     /** PetiteVue.createApp - create PetiteVue instance */
     createApp: (args: any) => any;
-    /** PetiteVue.nextTick - register callback to be fired after next async loop */
+    /** PetiteVue.nextTick - register callback to be fired afterA next async loop */
     nextTick: (f: Function) => void;
     /** PetiteVue.reactive - create a reactive store */
     reactive: Identity;
@@ -1240,6 +1701,10 @@ export type App = {
 
 /** Utility class for managing Forms UI and behavior */
 export type Forms = {
+    /** Server Metadata */
+    Server: AppMetadata;
+    /** Client Metadata APIs */
+    Meta: Meta,
     getId: (type: MetadataType, row: any) => any;
     getType: (typeRef: string | {
         namespace: string;
@@ -1306,7 +1771,6 @@ export type Forms = {
     isRequired(input: any): boolean;
     resolveFormLayout(op: MetadataOperationType): InputInfo[];
     formValues(form: any): Record<string,any>;
-    formData(form: any, op: MetadataOperationType): FormData;
     groupTypes(allTypes: any): any[];
     complexProp(prop: any): boolean;
     supportsProp(prop: any): boolean;
@@ -1321,12 +1785,18 @@ export type Meta = {
     CACHE: {};
     /** HTTP Errors specially handled by Locode */
     HttpErrors: Record<number, string>;
+    /** Server Metadata */
+    Server: AppMetadata;
     /** Map of Request DTO names to `MetadataOperationType` */
     OpsMap: Record<string, MetadataOperationType>;
     /** Map of DTO names to `MetadataType` */
     TypesMap: Record<string, MetadataType>;
     /** Map of DTO namespace + names to `MetadataType` */
     FullTypesMap: Record<string, MetadataType>;
+    /** Get list of Request DTOs */
+    operations: MetadataOperationType[];
+    /** Get list of unique API tags */
+    tags: string[];
     /** Find `MetadataOperationType` by API name */
     getOp: (opName: string) => MetadataOperationType;
     /** Find `MetadataType` by DTO name */
@@ -1337,6 +1807,10 @@ export type Meta = {
     enumValues: (type: string) => { key: string; value: string; }[];
     /** Get API Icon */
     getIcon: (args: ({ op?: MetadataOperationType; type?: MetadataType; })) => { svg: string; };
+    /** Get Locode URL */
+    locodeUrl: (op:string) => string;
+    /** Get URL with initial queryString state */
+    urlWithState: (url:string) => string;
 };
 
 /** Reactive store to manage page navigation state and sync with history.pushState */

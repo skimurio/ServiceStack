@@ -12,10 +12,8 @@ namespace ServiceStack
 {
     [Serializable]
     public class WebServiceException
-        : Exception, IHasStatusCode, IHasStatusDescription, IResponseStatusConvertible
+        : Exception, IHasStatusCode, IHasStatusDescription, IResponseStatusConvertible, IHasResponseStatus
     {
-        public static ILog log = LogManager.GetLogger(typeof(WebServiceException));
-
         public WebServiceException() { }
         public WebServiceException(string message) : base(message) { }
         public WebServiceException(string message, Exception innerException) : base(message, innerException) { }
@@ -83,12 +81,29 @@ namespace ServiceStack
                 }
                 catch (Exception ex)
                 {
+                    var log = LogManager.GetLogger(typeof(WebServiceException));
                     if (log.IsDebugEnabled)
                         log.Debug($"Could not parse Error ResponseStatus {ResponseDto?.GetType().Name}", ex);
-                }        
+                }
+
+                if (string.IsNullOrEmpty(responseStatus?.ErrorCode))
+                {
+                    if (InnerException != null)
+                    {
+                        responseStatus = InnerException is not IResponseStatusConvertible // avoid potential infinite recursion
+                            ? ErrorUtils.CreateError(InnerException)
+                            : ErrorUtils.CreateError(InnerException.Message, InnerException.GetType().Name);
+                    }
+                    else
+                    {
+                        var message = StatusDescription ?? base.Message ?? ((HttpStatusCode)StatusCode).ToString().SplitCamelCase();
+                        responseStatus = ErrorUtils.CreateError(message, errorCode:message);
+                    }
+                }
 
                 return responseStatus;
             }
+            set => responseStatus = value;
         }
 
         private ResponseStatus ToBuiltInResponseStatus(object statusDto)
@@ -105,11 +120,11 @@ namespace ServiceStack
 
         public ResponseStatus ToResponseStatus() => ResponseStatus;
 
-        public List<ResponseError> GetFieldErrors() => ResponseStatus?.Errors ?? new List<ResponseError>();
+        public List<ResponseError> GetFieldErrors() => ResponseStatus?.Errors ?? [];
 
-        public bool IsAny400() => StatusCode >= 400 && StatusCode < 500;
+        public bool IsAny400() => StatusCode is >= 400 and < 500;
 
-        public bool IsAny500() => StatusCode >= 500 && StatusCode < 600;
+        public bool IsAny500() => StatusCode is >= 500 and < 600;
 
         public override string ToString()
         {
@@ -125,14 +140,14 @@ namespace ServiceStack
                     sb.Append("Field Errors:\n");
                     foreach (var error in status.Errors)
                     {
-                        sb.Append($"  [{error.FieldName}] {error.ErrorCode}:{error.Message}\n");
+                        sb.Append($"  [{error.FieldName}] {error.ErrorCode}: {error.Message}\n");
 
                         if (error.Meta != null && error.Meta.Count > 0)
                         {
                             sb.Append("  Field Meta:\n");
                             foreach (var entry in error.Meta)
                             {
-                                sb.Append($"    {entry.Key}:{entry.Value}\n");
+                                sb.Append($"    {entry.Key}: {entry.Value}\n");
                             }
                         }
                     }
@@ -143,7 +158,7 @@ namespace ServiceStack
                     sb.Append("Meta:\n");
                     foreach (var entry in status.Meta)
                     {
-                        sb.Append($"  {entry.Key}:{entry.Value}\n");
+                        sb.Append($"  {entry.Key}: {entry.Value}\n");
                     }
                 }
             }

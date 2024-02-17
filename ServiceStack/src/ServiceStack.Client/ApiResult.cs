@@ -22,8 +22,8 @@ public static class ApiResult
     public static ApiResult<EmptyResponse> CreateError(string message, string? errorCode = nameof(Exception)) =>
         new(ErrorUtils.CreateError(message, errorCode));
 
-    public static ApiResult<TResponse> CreateError<TResponse>(Exception ex) => new(ErrorUtils.CreateError(ex));
-    public static ApiResult<EmptyResponse> CreateError(Exception ex) => new(ErrorUtils.CreateError(ex));
+    public static ApiResult<TResponse> CreateError<TResponse>(Exception ex) => new(ErrorUtils.CreateError(ex)) { StackTrace = ex.StackTrace };
+    public static ApiResult<EmptyResponse> CreateError(Exception ex) => new(ErrorUtils.CreateError(ex)) { StackTrace = ex.StackTrace };
 
     public static ApiResult<TResponse> CreateFieldError<TResponse>(string fieldName, string message, string? errorCode = FieldErrorCode)
     {
@@ -50,7 +50,7 @@ public class ApiResult<TResponse> : IHasErrorStatus
     public bool Succeeded => !Failed && Response != null;
     public bool Completed => Response != null || Error != null;
     public bool IsLoading { get; set; }
-
+    public string? StackTrace { get; set; }
     public string? ErrorMessage => Error?.Message;
 
     public ResponseError[] Errors => Error?.Errors?.ToArray() ?? TypeConstants<ResponseError>.EmptyArray;
@@ -145,8 +145,8 @@ public static class ErrorUtils
     public static ResponseStatus AsResponseStatus(this Exception ex) => CreateError(ex);
 
     public static ResponseStatus CreateError(Exception ex) => ex switch {
-        IResponseStatusConvertible rsc => rsc.ToResponseStatus(),
-        IHasResponseStatus hasStatus => hasStatus.ResponseStatus,
+        IResponseStatusConvertible rsc => rsc.ToResponseStatus() ?? CreateError(ex.Message, ex.GetType().Name),
+        IHasResponseStatus hasStatus => hasStatus.ResponseStatus ?? CreateError(ex.Message, ex.GetType().Name),
         ArgumentException { ParamName: { } } ae => CreateFieldError(ae.ParamName, ex.Message, ex.GetType().Name),
         _ => CreateError(ex.Message, ex.GetType().Name)
     };
@@ -220,8 +220,7 @@ public static class ApiResultUtils
     /// Annotate Request DTOs with IGet, IPost, etc HTTP Verb markers to specify which HTTP Method is used:
     /// https://docs.servicestack.net/csharp-client.html#http-verb-interface-markers
     /// </summary>
-    public static async Task<ApiResult<TResponse>> ApiAsync<TResponse>(this IServiceClient client,
-        IReturn<TResponse> request)
+    public static async Task<ApiResult<TResponse>> ApiAsync<TResponse>(this IServiceClient client, IReturn<TResponse> request)
     {
         try
         {

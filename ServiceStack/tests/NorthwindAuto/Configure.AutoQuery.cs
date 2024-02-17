@@ -1,10 +1,12 @@
 using Chinook.ServiceModel.Types;
 using Microsoft.AspNetCore.Hosting;
+using MyApp.Data;
 using MyApp.ServiceModel;
 using ServiceStack;
 using ServiceStack.Auth;
 using ServiceStack.Data;
 using ServiceStack.Html;
+using ServiceStack.OrmLite;
 using TalentBlazor.ServiceModel;
 
 // In Configure.AppHost
@@ -15,20 +17,22 @@ namespace MyApp
     public class ConfigureAutoQuery : IHostingStartup
     {
         public void Configure(IWebHostBuilder builder) => builder
-            .ConfigureServices(services => {
+            .ConfigureServices((context,services) => {
                 // Enable Audit History
                 services.AddSingleton<ICrudEvents>(c =>
-                    new OrmLiteCrudEvents(c.Resolve<IDbConnectionFactory>()));
-            })
-            .ConfigureAppHost(appHost => {
+                    new OrmLiteCrudEvents(c.GetRequiredService<IDbConnectionFactory>()));
+                
                 // For TodosService
-                appHost.Plugins.Add(new AutoQueryDataFeature());
+                services.AddPlugin(new AutoQueryDataFeature());
 
                 // For NorthwindAuto + Bookings
-                appHost.Plugins.Add(new AutoQueryFeature {
+                services.AddPlugin(new AutoQueryFeature {
                     MaxLimit = 100,
                     GenerateCrudServices = new GenerateCrudServices {
+                        DbFactory = new OrmLiteConnectionFactory(
+                            context.Configuration.GetConnectionString("DefaultConnection"), SqliteDialect.Provider),
                         AutoRegister = true,
+                        ExcludeTables = [nameof(ApplicationUser)],
                         ServiceFilter = (op, req) =>
                         {
                             op.Request.AddAttributeIfNotExists(new TagAttribute("Northwind"));
@@ -37,6 +41,12 @@ namespace MyApp
                         },
                         TypeFilter = (type, req) =>
                         {
+                            if (type.IsCrudCreateOrUpdate())
+                            {
+                                type.Properties?.Where(p => p.Name is "Notes" or "Description")
+                                    .Each(p => p.AddAttribute(new InputAttribute { Type = Input.Types.Textarea }));
+                            }
+                            
                             if (type.IsCrudCreateOrUpdate("Employee"))
                             {
                                 type.Property("PhotoPath")
@@ -68,7 +78,8 @@ namespace MyApp
                             nameof(Contact),nameof(PhoneScreen),nameof(Interview)),
                     },
                 });
-
+            })
+            .ConfigureAppHost(appHost => {
                 // Can use to configure both code-first + generated types
                 var dateFormat = new IntlDateTime(DateStyle.Medium).ToFormat();
                 var currency = new IntlNumber { Currency = NumberCurrency.USD }.ToFormat();
@@ -76,10 +87,11 @@ namespace MyApp
                 var icons = new Dictionary<string, ImageInfo>
                 {
                     [nameof(ApiKey)] = Svg.CreateImage(Svg.Body.Key),
-                    [nameof(AppUser)] = Svg.CreateImage(Svg.Body.User),
+                    [nameof(ApplicationUser)] = Svg.CreateImage(Svg.Body.User),
                     [nameof(CrudEvent)] = Svg.CreateImage(Svg.Body.History),
                     [nameof(UserAuthDetails)] = Svg.CreateImage(Svg.Body.UserDetails),
                     [nameof(UserAuthRole)] = Svg.CreateImage(Svg.Body.UserShield),
+                    [nameof(ValidationRule)] = Svg.CreateImage(Svg.Body.Lock),
                   
                     // Northwind
                     ["Category"] = Svg.CreateImage("<path fill='currentColor' d='M20 5h-9.586L8.707 3.293A.997.997 0 0 0 8 3H4c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h16c1.103 0 2-.897 2-2V7c0-1.103-.897-2-2-2z'/>"),

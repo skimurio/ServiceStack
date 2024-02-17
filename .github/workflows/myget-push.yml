@@ -1,4 +1,4 @@
-﻿name: MyGet Publish
+name: A MyGet Publish
 
 on: workflow_dispatch
 
@@ -8,28 +8,15 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v1
+        uses: actions/setup-dotnet@v3
         with:
-          dotnet-version: '6.0'
-          include-prerelease: true
+          dotnet-version: '8.0.100'
           
-      - name: Get Run ID
-        id: get_run_id
-        run: |
-          echo "::set-output name=run_id::$(\
-            gh run list \
-              --workflow myget-pack.yml \
-              --json conclusion,headSha,status,databaseId \
-              --jq ".[] | select( .conclusion == \"success\" and .headSha == \"${{github.sha}}\") | .databaseId" \
-          )"
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Download artifact
         uses: dawidd6/action-download-artifact@v2
         with:
-          workflow: myget-pack.yml
-          run_id: ${{steps.get_run_id.outputs.run_id}}
+          workflow: pre-release-pack.yml
           # workflow_conclusion: success
           name: ServiceStack Packages
           commit: ${{ github.sha }}
@@ -48,10 +35,8 @@ jobs:
           # Check if more than 73 packages 
           if [[ ${number_of_packages} -gt 73 ]]; then
             echo "Pushing to MyGet"
-            dotnet nuget push '*.nupkg' -s 'https://www.myget.org/F/servicestack/api/v2/package' -k '${{ secrets.MYGET_APIKEY }}'
+            dotnet nuget push '*.nupkg' -s 'https://www.myget.org/F/servicestack/api/v2/package' -k '${{ secrets.MYGET_APIKEY }}' --skip-duplicate
           else
             echo 'Less files than expected, skipping push'
             exit 1
           fi
-          
-          

@@ -1,6 +1,7 @@
 using System;
 using ServiceStack.Web;
 using ServiceStack.Host.Handlers;
+using ServiceStack.Text;
 
 namespace ServiceStack;
 
@@ -23,7 +24,63 @@ public static class ApiHandlers
         Generic(apiPath, MimeTypes.Xml, RequestAttributes.Reply | RequestAttributes.Xml, Feature.Xml);
     
     public static Func<IHttpRequest, HttpAsyncTaskHandler> Generic(string apiPath, 
-        string contentType, RequestAttributes requestAttributes, Feature feature)
+        string contentType, RequestAttributes requestAttributes, Feature features)
+    {
+        var baseApiPath = GetBaseApiPath(apiPath);
+        var useApiPath = apiPath.LastLeftPart('/') + '/';
+        
+        return req => {
+            // Don't handle OPTIONS CORS requests
+            if (req.HttpMethod == HttpMethods.Options)
+            {
+                var emitHandler = HostContext.GetPlugin<CorsFeature>()?.EmitGlobalHeadersHandler;
+                if (emitHandler != null)
+                    return emitHandler;
+                return null;
+            }
+            
+            var pathInfo = req.PathInfo;
+            if (pathInfo == baseApiPath || pathInfo.StartsWith(useApiPath))
+            {
+                // Add support for overriding content type with ext, e.g. .csv
+                var apiName = pathInfo == baseApiPath ? "" : pathInfo.LastRightPart('/');
+                if (string.IsNullOrEmpty(apiName))
+                {
+                    var feature = HostContext.GetPlugin<PredefinedRoutesFeature>();
+                    if (feature?.ApiIndex != null)
+                    {
+                        var ret = feature.ApiIndex(req);
+                        return new CustomActionHandlerAsync(async (req, res) =>
+                        {
+                            res.ContentType = contentType;
+                            var serializer = HostContext.ContentTypes.GetStreamSerializerAsync(contentType);
+                            await serializer(req, ret, req.Response.OutputStream).ConfigAwait();
+                        });
+                    }
+                    return new NotFoundHttpHandler();
+                }
+                
+                var useContentType = contentType;
+                var useRequestAttrs = requestAttributes;
+                var useFeature = features;
+                if (apiName.IndexOf('.') >= 0)
+                {
+                    var ext = apiName.RightPart('.');
+                    apiName = apiName.LeftPart('.');
+                    useContentType = HostContext.ContentTypes.GetFormatContentType(ext);
+                    useRequestAttrs = RequestAttributes.Reply | ContentFormat.GetEndpointAttributes(useContentType);
+                    useFeature = useContentType.ToFeature();
+                }
+
+                return new GenericHandler(useContentType, useRequestAttrs, useFeature) {
+                    RequestName = apiName
+                };
+            }
+            return null;
+        };
+    }
+
+    public static string GetBaseApiPath(string apiPath)
     {
         if (string.IsNullOrEmpty(apiPath))
             throw new ArgumentNullException(nameof(apiPath));
@@ -31,21 +88,31 @@ public static class ApiHandlers
             throw new ArgumentException(apiPath + " must start with '/'");
         if (!apiPath.EndsWith("/{Request}"))
             throw new ArgumentException(apiPath + " must end with '/{Request}'");
-        var useApiPath = apiPath.LastLeftPart('/') + '/';
-        
-        return req => {
-            // Don't handle OPTIONS CORS requests
-            if (req.HttpMethod == HttpMethods.Options) return null;
-            
-            var pathInfo = req.PathInfo;
-            if (pathInfo.StartsWith(useApiPath))
-            {
-                var apiName = pathInfo.LastRightPart('/');
-                return new GenericHandler(contentType, requestAttributes, feature) {
-                    RequestName = apiName
-                };
-            }
-            return null;
+        var baseApiPath = apiPath.LastLeftPart('/');
+        return baseApiPath;
+    }
+
+    public static HttpAsyncTaskHandler JsonEndpointHandler(string apiPath, string pathInfo)
+    {
+        var useContentType = MimeTypes.Json;
+        var useRequestAttrs = RequestAttributes.Reply | RequestAttributes.Json;
+        var useFeature = Feature.Json;
+
+        var apiName = pathInfo == apiPath ? "" : pathInfo.LastRightPart('/');
+        if (string.IsNullOrEmpty(apiName))
+            return new NotFoundHttpHandler();
+
+        if (apiName.IndexOf('.') >= 0)
+        {
+            var ext = apiName.RightPart('.');
+            apiName = apiName.LeftPart('.');
+            useContentType = HostContext.ContentTypes.GetFormatContentType(ext);
+            useRequestAttrs = RequestAttributes.Reply | ContentFormat.GetEndpointAttributes(useContentType);
+            useFeature = useContentType.ToFeature();
+        }
+
+        return new GenericHandler(useContentType, useRequestAttrs, useFeature) {
+            RequestName = apiName
         };
     }
 }

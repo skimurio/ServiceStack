@@ -1,7 +1,12 @@
-﻿using System;
+﻿#nullable enable
+
+using System;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.IO;
+using Funq;
 using ServiceStack.Logging;
 using ServiceStack.NetCore;
 using ServiceStack.Text;
@@ -15,6 +20,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using ServiceStack.Data;
 using ServiceStack.Host.NetCore;
 using ServiceStack.IO;
 using ServiceStack.Web;
@@ -28,285 +34,439 @@ using IWebHostEnvironment = Microsoft.AspNetCore.Hosting.IWebHostEnvironment;
 using IHostApplicationLifetime = Microsoft.Extensions.Hosting.IHostApplicationLifetime;
 #endif
 
-namespace ServiceStack
+namespace ServiceStack;
+
+public abstract class AppSelfHostBase : ServiceStackHost, IAppHostNetCore, IConfigureServices, IRequireConfiguration
 {
-    public abstract class AppSelfHostBase : ServiceStackHost, IAppHostNetCore, IConfigureServices, IRequireConfiguration
+    public IConfiguration Configuration { get; set; }
+    
+    protected AppSelfHostBase(string serviceName, params Assembly[] assembliesWithServices)
+        : base(serviceName, assembliesWithServices) 
     {
-        public IConfiguration Configuration { get; set; }
-        
-        protected AppSelfHostBase(string serviceName, params Assembly[] assembliesWithServices)
-            : base(serviceName, assembliesWithServices) 
+        Platforms.PlatformNetCore.HostInstance = this;
+    }
+    
+    protected AppSelfHostBase(string serviceName, params Type[] serviceTypes)
+        : base(serviceName, TypeConstants<Assembly>.EmptyArray) 
+    {
+        Platforms.PlatformNetCore.HostInstance = this;
+        ServiceController = CreateServiceController(serviceTypes);
+    }
+    
+    /// <summary>
+    /// Whether ServiceStack should ignore handling request
+    /// </summary>
+    public Func<HttpContext, bool>? IgnoreRequestHandler { get; set; }
+
+#if NET8_0_OR_GREATER
+    /// <summary>
+    /// Options for app.UseServiceStack(new AppHost(), options => { ... })
+    /// </summary>
+    public ServiceStackOptions Options { get; set; } = new();
+    
+    public Dictionary<string, string[]> EndpointVerbs { get; } = new()
+    {
+        [HttpMethods.Get] = [HttpMethods.Get],
+        [HttpMethods.Post] = [HttpMethods.Post],
+        [HttpMethods.Put] = [HttpMethods.Put],
+        [HttpMethods.Delete] = [HttpMethods.Delete],
+        [HttpMethods.Patch] = [HttpMethods.Patch],
+    };
+    
+    /// <summary>
+    /// Whether to use ASP.NET Core Endpoint Route to invoke ServiceStack APIs
+    /// </summary>
+    public virtual bool ShouldUseEndpointRoute(HttpContext httpContext)
+    {
+        var endpoint = httpContext.GetEndpoint();
+        var wildcardEndpoint = endpoint is Microsoft.AspNetCore.Routing.RouteEndpoint routeEndpoint && 
+                               routeEndpoint.RoutePattern.RawText?.StartsWith("/{") == true &&
+                               routeEndpoint.RoutePattern.RawText?.EndsWith('}') == true;
+        var useExistingNonWildcardEndpoint = endpoint != null && !wildcardEndpoint;
+        return useExistingNonWildcardEndpoint;
+    }
+    
+    public virtual RouteHandlerBuilder ConfigureOperationEndpoint(RouteHandlerBuilder builder, Operation operation)
+    {
+        if (operation.ResponseType != null)
         {
-            Platforms.PlatformNetCore.HostInstance = this;
+            if (operation.ResponseType == typeof(byte[]) || operation.ResponseType == typeof(Stream))
+            {
+                builder.Produces(200, responseType:operation.ResponseType, contentType:MimeTypes.Binary);
+            }
+            else
+            {
+                builder.Produces(200, responseType:operation.ResponseType, contentType:MimeTypes.Json);
+            }
         }
-        
-        protected AppSelfHostBase(string serviceName, params Type[] serviceTypes)
-            : base(serviceName, TypeConstants<Assembly>.EmptyArray) 
+        else
         {
-            Platforms.PlatformNetCore.HostInstance = this;
-            ServiceController = CreateServiceController(serviceTypes);
+            builder.Produces(Config.Return204NoContentForEmptyResponse ? 204 : 200, responseType:null);
+        }
+        if (operation.RequiresAuthentication)
+        {
+            var authAttr = operation.Authorize ?? new Microsoft.AspNetCore.Authorization.AuthorizeAttribute();
+            authAttr.AuthenticationSchemes ??= Options.AuthenticationSchemes;
+            builder.RequireAuthorization(authAttr);
+        }
+        else
+        {
+            builder.AllowAnonymous();
+        }
+            
+        if (operation.RequestType.ExcludesFeature(Feature.Metadata) || 
+            operation.RequestType.ExcludesFeature(Feature.ApiExplorer))
+            builder.ExcludeFromDescription();
+
+        return builder;
+    }
+    
+    public virtual void RegisterEndpoints(Microsoft.AspNetCore.Routing.IEndpointRouteBuilder routeBuilder)
+    {
+        if (Options.UseEndpointRouting)
+        {
+            IgnoreRequestHandler = ShouldUseEndpointRoute;
         }
 
-        private string pathBase;
-        public override string PathBase
+        MapUserDefinedRoutes(routeBuilder);
+    }
+
+    public virtual void MapUserDefinedRoutes(Microsoft.AspNetCore.Routing.IEndpointRouteBuilder routeBuilder)
+    {
+        Task HandleRequestAsync(Type requestType, HttpContext httpContext)
         {
-            get => pathBase;
-            set
+            var req = httpContext.ToRequest();
+            var restPath = RestHandler.FindMatchingRestPath(req, out var contentType);
+            var handler = restPath != null
+                ? (HttpAsyncTaskHandler)new RestHandler {
+                    RestPath = restPath, 
+                    RequestName = restPath.RequestType.GetOperationName(), 
+                    ResponseContentType = contentType
+                }
+                : new NotFoundHttpHandler();
+            return handler.ProcessRequestAsync(req, req.Response, requestType.Name);
+        }
+        
+        foreach (var entry in Metadata.OperationsMap)
+        {
+            var requestType = entry.Key;
+            var operation = entry.Value;
+
+            if (!EndpointVerbs.TryGetValue(operation.Method, out var verb))
+                continue;
+
+            foreach (var route in operation.Routes.Safe())
             {
-                if (!string.IsNullOrEmpty(value))
+                var routeVerbs = route.Verbs == null || (route.Verbs.Length == 1 && route.Verbs[0] == ActionContext.AnyAction) 
+                    ? [operation.Method]
+                    : route.Verbs;
+
+                string? routeRule = null;
+                try
                 {
-                    if (value[0] != '/')
-                        throw new Exception("PathBase must start with '/'");
+                    foreach (var routeVerb in routeVerbs)
+                    {
+                        if (!EndpointVerbs.TryGetValue(routeVerb, out verb))
+                            continue;
+
+                        routeRule = $"[{verb}] {route.Path}";
+                        var pathBuilder = routeBuilder.MapMethods(route.Path, verb, (HttpResponse response, HttpContext httpContext) =>
+                            HandleRequestAsync(requestType, httpContext));
+                        
+                        ConfigureOperationEndpoint(pathBuilder, operation);
+
+                        foreach (var handler in Options.RouteHandlerBuilders)
+                        {
+                            handler(pathBuilder, operation, routeVerb, route.Path);
+                        }
+                    }
                     
-                    pathBase = value.TrimEnd('/');
+                    // Add /custom/path.{format} routes for GET requests
+                    if (routeVerbs.Contains(HttpMethods.Get) && !route.Path.Contains('.') && !route.Path.Contains('*'))
+                    {
+                        routeRule = $"[GET] {route.Path}.format";
+                        var pathBuilder = routeBuilder.MapMethods(route.Path + ".{format}", EndpointVerbs[HttpMethods.Get], 
+                            (string format, HttpResponse response, HttpContext httpContext) =>
+                                HandleRequestAsync(requestType, httpContext));
+                        
+                        ConfigureOperationEndpoint(pathBuilder, operation)
+                            .WithMetadata<string>(route.Path + ".format");
+                    }
                 }
-                else
+                catch (Exception e)
                 {
-                    pathBase = null;
+                    LogManager.GetLogger(GetType()).Error($"Error mapping route '{routeRule}' for {requestType.Name}: {e.Message}", e);
+                    throw;
                 }
             }
         }
+    }
+#endif
 
-        IApplicationBuilder app;
-        public IApplicationBuilder App => app;
-        public IServiceProvider ApplicationServices => app?.ApplicationServices;
-
-        private IWebHostEnvironment env;
-        public IWebHostEnvironment HostingEnvironment => env ??= app?.ApplicationServices.GetService<IWebHostEnvironment>();
-
-        public virtual void Bind(IApplicationBuilder app)
+    private string? pathBase;
+    public override string? PathBase
+    {
+        get => pathBase;
+        set
         {
-            this.app = app;
-
-            if (!string.IsNullOrEmpty(PathBase))
+            if (!string.IsNullOrEmpty(value))
             {
-                this.app.UsePathBase(PathBase);
+                if (value[0] != '/')
+                    throw new Exception("PathBase must start with '/'");
+                
+                pathBase = value.TrimEnd('/');
             }
-
-            AppHostBase.BindHost(this, app);
-            app.Use(ProcessRequest);
-        }
-
-        public override void OnConfigLoad()
-        {
-            base.OnConfigLoad();
-            if (app != null)
+            else
             {
-                Config.DebugMode = HostingEnvironment.IsDevelopment();
-                Config.HandlerFactoryPath = PathBase?.TrimStart('/');
-
-                //Initialize VFS
-                Config.WebHostPhysicalPath = HostingEnvironment.ContentRootPath;
-
-                if (VirtualFiles == null)
-                {
-                    //Set VirtualFiles to point to ContentRootPath (Project Folder)
-                    VirtualFiles = new FileSystemVirtualFiles(HostingEnvironment.ContentRootPath);
-                }
-                AppHostBase.RegisterLicenseFromAppSettings(AppSettings);
-                Config.MetadataRedirectPath = "metadata";
+                pathBase = null;
             }
         }
+    }
 
-        public virtual async Task ProcessRequest(HttpContext context, Func<Task> next)
+    IApplicationBuilder? app;
+    public IApplicationBuilder App => app ?? throw new ArgumentNullException(nameof(app));
+    public IServiceProvider ApplicationServices => App.ApplicationServices;
+
+    private IWebHostEnvironment? env;
+    public IWebHostEnvironment HostingEnvironment => env ??= app!.ApplicationServices.GetService<IWebHostEnvironment>()
+        ?? throw new ArgumentNullException(nameof(env));
+
+    public virtual void Bind(IApplicationBuilder app)
+    {
+        this.app = app;
+
+        if (!string.IsNullOrEmpty(PathBase))
         {
-            //Keep in sync with AppHostBase.NetCore.cs
-            var operationName = context.Request.GetOperationName().UrlDecode() ?? "Home";
-            var pathInfo = context.Request.Path.HasValue
-                ? context.Request.Path.Value
-                : "/";
+            this.app.UsePathBase(PathBase);
+        }
 
-            var mode = Config.HandlerFactoryPath;
-            if (!string.IsNullOrEmpty(mode))
+        AppHostBase.BindHost(this, app);
+        app.Use(ProcessRequest);
+    }
+
+    public override void OnConfigLoad()
+    {
+        base.OnConfigLoad();
+        if (app != null)
+        {
+            Config.DebugMode = HostingEnvironment.IsDevelopment();
+            Config.HandlerFactoryPath = PathBase?.TrimStart('/');
+
+            //Initialize VFS
+            Config.WebHostPhysicalPath = HostingEnvironment.ContentRootPath;
+
+            if (VirtualFiles == null)
             {
-                var includedInPathInfo = pathInfo.IndexOf(mode, StringComparison.Ordinal) == 1;
-                var includedInPathBase = context.Request.PathBase.HasValue &&
-                                         context.Request.PathBase.Value.IndexOf(mode, StringComparison.Ordinal) == 1;
-                if (!includedInPathInfo && !includedInPathBase)
-                {
-                    await next();
-                    return;
-                }
+                //Set VirtualFiles to point to ContentRootPath (Project Folder)
+                VirtualFiles = new FileSystemVirtualFiles(HostingEnvironment.ContentRootPath);
+            }
+            AppHostBase.RegisterLicenseFromAppSettings(AppSettings);
+            Config.MetadataRedirectPath = "metadata";
+        }
+    }
 
-                if (includedInPathInfo)
-                    pathInfo = pathInfo.Substring(mode.Length + 1);
+    public virtual async Task ProcessRequest(HttpContext context, Func<Task> next)
+    {
+        //Keep in sync with AppHostBase.NetCore.cs
+        var operationName = context.Request.GetOperationName().UrlDecode() ?? "Home";
+        var pathInfo = context.Request.Path.HasValue
+            ? context.Request.Path.Value
+            : "/";
+
+        var mode = Config.HandlerFactoryPath;
+        if (!string.IsNullOrEmpty(mode))
+        {
+            var includedInPathInfo = pathInfo.IndexOf(mode, StringComparison.Ordinal) == 1;
+            var includedInPathBase = context.Request.PathBase.HasValue &&
+                                     context.Request.PathBase.Value.IndexOf(mode, StringComparison.Ordinal) == 1;
+            if (!includedInPathInfo && !includedInPathBase)
+            {
+                await next();
+                return;
             }
 
-            RequestContext.Instance.StartRequestContext();
+            if (includedInPathInfo)
+                pathInfo = pathInfo.Substring(mode.Length + 1);
+        }
 
-            NetCoreRequest httpReq;
-            IResponse httpRes;
-            IHttpHandler handler;
+        RequestContext.Instance.StartRequestContext();
 
-            try 
+        NetCoreRequest httpReq;
+        IResponse httpRes;
+        IHttpHandler handler;
+
+        try 
+        {
+            httpReq = new NetCoreRequest(context, operationName, RequestAttributes.None, pathInfo); 
+            httpReq.RequestAttributes = httpReq.GetAttributes() | RequestAttributes.Http;
+            httpRes = httpReq.Response;
+            handler = HttpHandlerFactory.GetHandler(httpReq);
+        } 
+        catch (Exception ex) //Request Initialization error
+        {
+            var logFactory = context.Features.Get<ILoggerFactory>();
+            if (logFactory != null)
             {
-                httpReq = new NetCoreRequest(context, operationName, RequestAttributes.None, pathInfo); 
-                httpReq.RequestAttributes = httpReq.GetAttributes() | RequestAttributes.Http;
-                httpRes = httpReq.Response;
-                handler = HttpHandlerFactory.GetHandler(httpReq);
-            } 
-            catch (Exception ex) //Request Initialization error
+                var log = logFactory.CreateLogger(GetType());
+                log.LogError(default(EventId), ex, ex.Message);
+            }
+
+            context.Response.ContentType = MimeTypes.PlainText;
+            await context.Response.WriteAsync($"{ex.GetType().Name}: {ex.Message}");
+            if (Config.DebugMode)
+                await context.Response.WriteAsync($"\nStackTrace:\n{ex.StackTrace}");
+            return;
+        }
+
+        if (handler is IServiceStackHandler serviceStackHandler)
+        {
+            if (serviceStackHandler is NotFoundHttpHandler)
+            {
+                await next();
+                return;
+            }
+
+            try
+            {
+                await serviceStackHandler.ProcessRequestAsync(httpReq, httpRes, httpReq.OperationName);
+            }
+            catch (Exception ex)
             {
                 var logFactory = context.Features.Get<ILoggerFactory>();
                 if (logFactory != null)
                 {
                     var log = logFactory.CreateLogger(GetType());
-                    log.LogError(default(EventId), ex, ex.Message);
+                    log.LogError(default, ex, ex.Message);
                 }
-
-                context.Response.ContentType = MimeTypes.PlainText;
-                await context.Response.WriteAsync($"{ex.GetType().Name}: {ex.Message}");
-                if (Config.DebugMode)
-                    await context.Response.WriteAsync($"\nStackTrace:\n{ex.StackTrace}");
-                return;
             }
-
-            if (handler is IServiceStackHandler serviceStackHandler)
+            finally
             {
-                if (serviceStackHandler is NotFoundHttpHandler)
-                {
-                    await next();
-                    return;
-                }
-
-                if (!string.IsNullOrEmpty(serviceStackHandler.RequestName))
-                    operationName = serviceStackHandler.RequestName;
-
-                if (serviceStackHandler is RestHandler restHandler)
-                {
-                    httpReq.OperationName = operationName = restHandler.RestPath.RequestType.GetOperationName();
-                }
-
-                try
-                {
-                    await serviceStackHandler.ProcessRequestAsync(httpReq, httpRes, operationName);
-                }
-                catch (Exception ex)
-                {
-                    var logFactory = context.Features.Get<ILoggerFactory>();
-                    if (logFactory != null)
-                    {
-                        var log = logFactory.CreateLogger(GetType());
-                        log.LogError(default(EventId), ex, ex.Message);
-                    }
-                }
-                finally
-                {
-                    await httpRes.CloseAsync();
-                }
-                //Matches Exceptions handled in HttpListenerBase.InitTask()
-
-                return;
+                await httpRes.CloseAsync();
             }
+            //Matches Exceptions handled in HttpListenerBase.InitTask()
 
-            await next();
+            return;
         }
 
-        public override ServiceStackHost Init()
-        {
-            return this; //Run Init() after Bind()
-        }
+        await next();
+    }
 
-        protected void RealInit()
-        {
-            base.Init();
-        }
+    public override ServiceStackHost Init()
+    {
+        return this; //Run Init() after Bind()
+    }
 
-        private string ParsePathBase(string urlBase)
+    protected void RealInit()
+    {
+        base.Init();
+    }
+
+    private string ParsePathBase(string urlBase)
+    {
+        var pos = urlBase.IndexOf('/', "https://".Length);
+        if (pos >= 0)
         {
-            var pos = urlBase.IndexOf('/', "https://".Length);
-            if (pos >= 0)
+            var afterHost = urlBase.Substring(pos);
+            if (afterHost.Length > 1)
             {
-                var afterHost = urlBase.Substring(pos);
-                if (afterHost.Length > 1)
-                {
-                    PathBase = afterHost;
-                    return urlBase.Substring(0, pos + 1);
-                }
+                PathBase = afterHost;
+                return urlBase.Substring(0, pos + 1);
             }
-
-            return urlBase;
         }
 
-        public override ServiceStackHost Start(string urlBase)
+        return urlBase;
+    }
+
+    public override ServiceStackHost Start(string urlBase)
+    {
+        urlBase = ParsePathBase(urlBase);
+
+        return Start([urlBase]);
+    }
+
+    public IWebHost? WebHost { get; private set; }
+
+    public virtual ServiceStackHost Start(string[] urlBases)
+    {
+        this.WebHost = ConfigureHost(new WebHostBuilder(), urlBases).Build();
+        this.WebHost.Start();
+
+        return this;
+    }
+
+    public virtual IWebHostBuilder ConfigureHost(IWebHostBuilder host, string[] urlBases)
+    {
+        return host.UseKestrel(ConfigureKestrel)
+            .UseContentRoot(System.IO.Directory.GetCurrentDirectory())
+            .UseWebRoot(System.IO.Directory.GetCurrentDirectory())
+            .UseStartup<Startup>()
+            .UseUrls(urlBases);
+    }
+    
+    public virtual void ConfigureKestrel(KestrelServerOptions options) {}
+
+    /// <summary>
+    /// Override to Configure .NET Core dependencies
+    /// </summary>
+    public virtual void Configure(IServiceCollection services) {}
+
+    /// <summary>
+    /// Register dependencies in ServiceStack IOC, to register dependencies in ASP .NET Core IOC implement IHostingStartup
+    /// and register services in ConfigureServices(IServiceCollection)
+    /// </summary>
+    /// <param name="container"></param>
+    public override void Configure(Funq.Container container) => Configure();
+
+    public virtual void Configure() {}
+
+    /// <summary>
+    /// Override to Configure .NET Core App
+    /// </summary>
+    public virtual void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+    {
+        Configure(app);
+    }
+    
+    public virtual void Configure(IApplicationBuilder app) {}
+
+    public static AppSelfHostBase HostInstance => (AppSelfHostBase)Platforms.PlatformNetCore.HostInstance;
+
+    protected class Startup(IConfiguration configuration)
+    {
+        public IConfiguration Configuration { get; } = configuration;
+
+        public void ConfigureServices(IServiceCollection services)
         {
-            urlBase = ParsePathBase(urlBase);
-
-            return Start(new[] { urlBase });
+            HostInstance.Configuration = Configuration;
+            HostInstance.Configure(services);
         }
 
-        public IWebHost WebHost { get; private set; }
-
-        public virtual ServiceStackHost Start(string[] urlBases)
-        {
-            this.WebHost = ConfigureHost(new WebHostBuilder(), urlBases).Build();
-            this.WebHost.Start();
-
-            return this;
-        }
-
-        public virtual IWebHostBuilder ConfigureHost(IWebHostBuilder host, string[] urlBases)
-        {
-            return host.UseKestrel(ConfigureKestrel)
-                .UseContentRoot(System.IO.Directory.GetCurrentDirectory())
-                .UseWebRoot(System.IO.Directory.GetCurrentDirectory())
-                .UseStartup<Startup>()
-                .UseUrls(urlBases);
-        }
-        
-        public virtual void ConfigureKestrel(KestrelServerOptions options) {}
-
-        /// <summary>
-        /// Override to Configure .NET Core dependencies
-        /// </summary>
-        public virtual void Configure(IServiceCollection services) {}
-
-        /// <summary>
-        /// Override to Configure .NET Core App
-        /// </summary>
         public virtual void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
-            Configure(app);
+            HostInstance.Configure(app, env);
+            HostInstance.Bind(app);
+            HostInstance.RealInit();
         }
-        
-        public virtual void Configure(IApplicationBuilder app) {}
+    }
 
-        public static AppSelfHostBase HostInstance => (AppSelfHostBase)Platforms.PlatformNetCore.HostInstance;
+    public override IRequest TryGetCurrentRequest()
+    {
+        return AppHostBase.GetOrCreateRequest(app.ApplicationServices.GetService<IHttpContextAccessor>());
+    }
 
-        protected class Startup
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
         {
-            public IConfiguration Configuration { get; }
-            public Startup(IConfiguration configuration) => Configuration = configuration;
-
-            public void ConfigureServices(IServiceCollection services)
-            {
-                HostInstance.Configuration = Configuration;
-                HostInstance.Configure(services);
-            }
-
-            public virtual void Configure(IApplicationBuilder app, IWebHostEnvironment env)
-            {
-                HostInstance.Configure(app, env);
-                HostInstance.Bind(app);
-                HostInstance.RealInit();
-            }
+            this.WebHost?.Dispose();
+            this.WebHost = null;
         }
 
-        public override IRequest TryGetCurrentRequest()
-        {
-            return AppHostBase.GetOrCreateRequest(app.ApplicationServices.GetService<IHttpContextAccessor>());
-        }
+        base.Dispose(disposing);
+        LogManager.LogFactory = null;
+    }
+}
 
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                this.WebHost?.Dispose();
-                this.WebHost = null;
-            }
-
-            base.Dispose(disposing);
-            LogManager.LogFactory = null;
-        }
-    }    
+public static class AppSelfHostUtils
+{
 }

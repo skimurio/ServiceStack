@@ -1,6 +1,9 @@
+using System.Data;
 using MyApp.ServiceModel;
 using ServiceStack;
+using ServiceStack.Auth;
 using ServiceStack.Data;
+using ServiceStack.IO;
 using ServiceStack.OrmLite;
 using ServiceStack.VirtualPath;
 using TalentBlazor;
@@ -16,34 +19,80 @@ public class ConfigureDb : IHostingStartup
         .ConfigureServices((context, services) =>
         {
             var dbFactory = new OrmLiteConnectionFactory(
-                context.Configuration.GetConnectionString("DefaultConnection") ?? ":memory:",
+                context.Configuration.GetConnectionString("DefaultConnection"),
                 SqliteDialect.Provider);
+            
             services.AddSingleton<IDbConnectionFactory>(dbFactory);
             dbFactory.RegisterConnection("chinook", 
                 context.Configuration.GetConnectionString("ChinookConnection"), SqliteDialect.Provider);
+            
+            // Add support for dynamically generated db rules
+            services.AddSingleton<IValidationSource>(c => 
+                new OrmLiteValidationSource(c.GetRequiredService<IDbConnectionFactory>(), HostContext.LocalCache));            
+            
+            services.AddPlugin(new AdminDatabaseFeature {
+                QueryLimit = 100,
+                DatabasesFilter = dbs => {
+                    foreach (var db in dbs) 
+                    {
+                        if (db.Name == "main")
+                        {
+                            db.Alias = "Northwind";
+                            db.Schemas[0].Alias = "Traders";
+                        }
+                        else if (db.Name == "chinook")
+                        {
+                            db.Alias = "Chinook";
+                            db.Schemas[0].Alias = "Music";
+                        }
+                    }
+                },
+                // SchemasFilter = schemas => {
+                //     schemas.Add(new SchemaInfo {
+                //         Name = "test",
+                //         Tables = new() { "Test" },
+                //     });
+                // },
+            });
         })
         .ConfigureAppHost(appHost =>
         {
             // Create non-existing Table and add Seed Data Example
-            using var db = appHost.Resolve<IDbConnectionFactory>().Open();
-            db.SeedBookings();
-            db.SeedPlayers();
-
             appHost.AddVirtualFileSources.Add(new FileSystemMapping("profiles", AppHost.ProfilesDir));
-            db.DropTable<Contact>();
-            db.DropTable<Job>();
-            db.DropTable<JobApplication>();
-            db.DropTable<JobApplicationEvent>();
-            db.DropTable<PhoneScreen>();
-            db.DropTable<Interview>();
-            db.DropTable<JobApplicationAttachment>();
-            db.DropTable<JobApplicationComment>();
-            db.SeedTalent(profilesDir:AppHost.ProfilesDir);
-            db.SeedAttachments(appHost, sourceDir:AppHost.TalentBlazorAppDataDir);
             
-            db.DropAndCreateTable<FileSystemItem>();
-            db.DropAndCreateTable<FileSystemFile>();
+            appHost.Resolve<IValidationSource>().InitSchema();
         });
+
+    public static void SeedData(IDbConnection db)
+    {
+        //using var db = appHost.Resolve<IDbConnectionFactory>().Open();
+        db.DropTable<JobApplicationComment>();
+        db.DropTable<JobApplicationAttachment>();
+        db.DropTable<JobOffer>();
+        db.DropTable<Interview>();
+        db.DropTable<PhoneScreen>();
+        db.DropTable<JobApplicationEvent>();
+        db.DropTable<JobApplication>();
+        db.DropTable<Job>();
+        db.DropTable<Contact>();
+            
+        db.SeedTalent(profilesDir:AppHost.ProfilesDir);
+        db.SeedAttachments(sourceDir:AppHost.TalentBlazorSeedDataDir);
+            
+        db.DropTable<FileSystemFile>();
+        db.DropTable<FileSystemItem>();
+        db.CreateTable<FileSystemItem>();
+        db.CreateTable<FileSystemFile>();
+            
+        db.DropTable<Todo>();
+            
+        if (db.CreateTableIfNotExists<Todo>()) 
+        {
+            db.Insert(new Todo { Text = "Learn" });
+            db.Insert(new Todo { Text = "AutoQuery" });
+        }
+    }
+    
 }
 
 public static class ConfigureDbUtils

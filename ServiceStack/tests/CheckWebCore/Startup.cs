@@ -120,7 +120,7 @@ namespace CheckWebCore
 
             app.UseServiceStack(new AppHost
             {
-                // PathBase = "/api",
+                //PathBase = "/test",
             });
         }
 
@@ -138,12 +138,13 @@ namespace CheckWebCore
             {
                 AddRedirectParamsToQueryString = true,
                 //DebugMode = AppSettings.Get(nameof(HostConfig.DebugMode), false),
-                //DebugMode = true,
-                DebugMode = false,
+                DebugMode = true,
+                // DebugMode = false,
 //                UseSameSiteCookies = true, // prevents OAuth providers which use Sessions like Twitter from working
                 UseSecureCookies = true,
                 AdminAuthSecret = "secretz",
                 CompressFilesWithExtensions = { "js", "css" },
+                //UseCamelCase = false,
             });
             
             RegisterService<GetFileService>();
@@ -152,7 +153,8 @@ namespace CheckWebCore
             
             // enable server-side rendering, see: https://sharpscript.net
             Plugins.Add(new SharpPagesFeature {
-                ScriptMethods = { new CustomScriptMethods() }
+                ScriptMethods = { new CustomScriptMethods() },
+                EnableHotReload = false,
             }); 
             
             Plugins.Add(new ServerEventsFeature());

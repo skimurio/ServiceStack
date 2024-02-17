@@ -42,7 +42,9 @@ namespace ServiceStack.OrmLite
 
             ormLiteConn.SetLastCommandText(null);
 
-            return new OrmLiteCommand(ormLiteConn, dbCmd);
+            return ormLiteConn != null
+                ? new OrmLiteCommand(ormLiteConn, dbCmd)
+                : dbCmd;
         }
 
         public virtual void DisposeCommand(IDbCommand dbCmd, IDbConnection dbConn)
@@ -59,6 +61,8 @@ namespace ServiceStack.OrmLite
         public virtual T Exec<T>(IDbConnection dbConn, Func<IDbCommand, T> filter)
         {
             var dbCmd = CreateCommand(dbConn);
+            var id = Diagnostics.OrmLite.WriteCommandBefore(dbCmd);
+            Exception e = null;
             try
             {
                 var ret = filter(dbCmd);
@@ -66,11 +70,16 @@ namespace ServiceStack.OrmLite
             }
             catch (Exception ex)
             {
+                e = ex;
                 OrmLiteConfig.ExceptionFilter?.Invoke(dbCmd, ex);
                 throw;
             }
             finally
             {
+                if (e != null)
+                    Diagnostics.OrmLite.WriteCommandError(id, dbCmd, e);
+                else
+                    Diagnostics.OrmLite.WriteCommandAfter(id, dbCmd);
                 DisposeCommand(dbCmd, dbConn);
             }
         }
@@ -89,17 +98,24 @@ namespace ServiceStack.OrmLite
         public virtual void Exec(IDbConnection dbConn, Action<IDbCommand> filter)
         {
             var dbCmd = CreateCommand(dbConn);
+            var id = Diagnostics.OrmLite.WriteCommandBefore(dbCmd);
+            Exception e = null;
             try
             {
                 filter(dbCmd);
             }
             catch (Exception ex)
             {
+                e = ex;
                 OrmLiteConfig.ExceptionFilter?.Invoke(dbCmd, ex);
                 throw;
             }
             finally
             {
+                if (e != null)
+                    Diagnostics.OrmLite.WriteCommandError(id, dbCmd, e);
+                else
+                    Diagnostics.OrmLite.WriteCommandAfter(id, dbCmd);
                 DisposeCommand(dbCmd, dbConn);
             }
         }
@@ -107,6 +123,8 @@ namespace ServiceStack.OrmLite
         public virtual async Task<T> Exec<T>(IDbConnection dbConn, Func<IDbCommand, Task<T>> filter)
         {
             var dbCmd = CreateCommand(dbConn);
+            var id = Diagnostics.OrmLite.WriteCommandBefore(dbCmd);
+            Exception e = null;
 
             try
             {
@@ -114,12 +132,16 @@ namespace ServiceStack.OrmLite
             }
             catch (Exception ex)
             {
-                var useEx = ex.UnwrapIfSingleException(); 
-                OrmLiteConfig.ExceptionFilter?.Invoke(dbCmd, useEx);
-                throw useEx;
+                e = ex.UnwrapIfSingleException(); 
+                OrmLiteConfig.ExceptionFilter?.Invoke(dbCmd, e);
+                throw e;
             }
             finally
             {
+                if (e != null)
+                    Diagnostics.OrmLite.WriteCommandError(id, dbCmd, e);
+                else
+                    Diagnostics.OrmLite.WriteCommandAfter(id, dbCmd);
                 DisposeCommand(dbCmd, dbConn);
             }
         }
@@ -133,6 +155,8 @@ namespace ServiceStack.OrmLite
         public virtual async Task Exec(IDbConnection dbConn, Func<IDbCommand, Task> filter)
         {
             var dbCmd = CreateCommand(dbConn);
+            var id = Diagnostics.OrmLite.WriteCommandBefore(dbCmd);
+            Exception e = null;
 
             try
             {
@@ -140,12 +164,16 @@ namespace ServiceStack.OrmLite
             }
             catch (Exception ex)
             {
-                var useEx = ex.UnwrapIfSingleException(); 
-                OrmLiteConfig.ExceptionFilter?.Invoke(dbCmd, useEx);
-                throw useEx;
+                e = ex.UnwrapIfSingleException();
+                OrmLiteConfig.ExceptionFilter?.Invoke(dbCmd, e);
+                throw e;
             }
             finally
             {
+                if (e != null)
+                    Diagnostics.OrmLite.WriteCommandError(id, dbCmd, e);
+                else
+                    Diagnostics.OrmLite.WriteCommandAfter(id, dbCmd);
                 DisposeCommand(dbCmd, dbConn);
             }
         }
@@ -153,10 +181,10 @@ namespace ServiceStack.OrmLite
         public virtual IEnumerable<T> ExecLazy<T>(IDbConnection dbConn, Func<IDbCommand, IEnumerable<T>> filter)
         {
             var dbCmd = CreateCommand(dbConn);
+            var id = Diagnostics.OrmLite.WriteCommandBefore(dbCmd);
             try
             {
                 var results = filter(dbCmd);
-
                 foreach (var item in results)
                 {
                     yield return item;
@@ -164,6 +192,7 @@ namespace ServiceStack.OrmLite
             }
             finally
             {
+                Diagnostics.OrmLite.WriteCommandAfter(id, dbCmd);
                 DisposeCommand(dbCmd, dbConn);
             }
         }

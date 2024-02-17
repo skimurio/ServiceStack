@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using ServiceStack.Host;
 using ServiceStack.Text;
+using ServiceStack.Web;
 
 namespace ServiceStack.HtmlModules;
 
@@ -8,14 +10,18 @@ namespace ServiceStack.HtmlModules;
 /// Invoke gateway response and return result as JSON, e.g:
 /// /*gateway:window.ARG=MyRequest({arg:1})*/
 /// </summary>
-public class GatewayHandler : IHtmlModulesHandler
+public class GatewayHandler(string name) : IHtmlModulesHandler
 {
-    public string Name { get; }
-    public GatewayHandler(string name) => Name = name;
+    public string Name { get; } = name;
+
+    public Func<IRequest, IServiceGateway> ServiceGatewayFactory { get; set; } = req => new InProcessServiceGateway(req);
 
     public ReadOnlyMemory<byte> Execute(HtmlModuleContext ctx, string args)
     {
-        return ctx.Cache($"{Name}:{args}", _ =>
+        var key = args.EndsWith("?")
+            ? $"{Name}:{args}{ctx.Request.QueryString}"
+            : $"{Name}:{args}";
+        return ctx.Cache(key, _ =>
         {
             if (string.IsNullOrEmpty(args) || args.IndexOf('=') == -1)
                 throw new ArgumentException(@"Usage: gateway:arg=RequestDto({...})", nameof(args));
@@ -30,9 +36,18 @@ public class GatewayHandler : IHtmlModulesHandler
                     ?? throw new ArgumentException($"Request DTO not found: {requestName}");
 
             var dtoArgs = !string.IsNullOrEmpty(dtoArgsJs) ? JSON.parse(dtoArgsJs) : null;
+            if (args.EndsWith("?") && dtoArgs is Dictionary<string,object> dictArgs)
+            {
+                foreach (var entry in ctx.Request.QueryString.ToDictionary())
+                {
+                    dictArgs[entry.Key] = entry.Value;
+                }
+            }
+            
             var requestDto = ctx.AppHost.Metadata.CreateRequestDto(requestType, dtoArgs);
             var responseType = ctx.AppHost.Metadata.GetResponseTypeByRequest(requestType);
-            var gateway = ctx.AppHost.GetServiceGateway(ctx.Request);
+            // Blazor Server returns Empty GatewayRequest without BaseUrl info
+            var gateway = ServiceGatewayFactory?.Invoke(ctx.Request) ?? ctx.AppHost.GetServiceGateway(ctx.Request);
 
             var jsconfig = (dtoArgs as Dictionary<string, object>)?.TryGetValue(Keywords.JsConfig, out var oJsconfig) == true
                 ? oJsconfig as string

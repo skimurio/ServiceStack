@@ -1,4 +1,5 @@
 ﻿#if !NETCORE
+using System.Runtime.Serialization;
 using NUnit.Framework;
 using ServiceStack.Auth;
 using ServiceStack.Messaging;
@@ -6,8 +7,10 @@ using ServiceStack.Text;
 
 namespace ServiceStack.Common.Tests
 {
+    [DataContract]
     public class Incr
     {
+        [DataMember]
         public int Value { get; set; }
     }
 
@@ -45,8 +48,8 @@ namespace ServiceStack.Common.Tests
         {
             var dto = new Incr { Value = 1 };
             var iMsg = MessageFactory.Create(dto);
-            var bytes = iMsg.ToBytes();
-            var typedMessage = bytes.ToMessage<Incr>();
+            var bytes = MessageSerializer.Instance.ToBytes(iMsg);
+            var typedMessage = MessageSerializer.Instance.ToMessage<Incr>(bytes);
 
             Assert.That(typedMessage.GetBody().Value, Is.EqualTo(dto.Value));
         }

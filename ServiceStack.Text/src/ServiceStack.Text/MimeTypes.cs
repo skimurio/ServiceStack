@@ -14,11 +14,14 @@ public static class MimeTypes
     public const string Xml = "application/xml";
     public const string XmlText = "text/xml";
     public const string Json = "application/json";
+    public const string JsonUtf8Suffix = Json + Utf8Suffix;
     public const string ProblemJson = "application/problem+json";
     public const string JsonText = "text/json";
     public const string Jsv = "application/jsv";
     public const string JsvText = "text/jsv";
     public const string Csv = "text/csv";
+    public const string Jsonl = "text/jsonl";
+    public const string Pdf = "application/pdf";
     public const string ProtoBuf = "application/x-protobuf";
     public const string JavaScript = "text/javascript";
     public const string WebAssembly = "application/wasm";
@@ -31,6 +34,7 @@ public static class MimeTypes
     public const string JsonReport = "text/jsonreport";
     public const string Soap11 = "text/xml; charset=utf-8";
     public const string Soap12 = "application/soap+xml";
+    public const string Rss = "application/rss+xml";
     public const string Yaml = "application/yaml";
     public const string YamlText = "text/yaml";
     public const string PlainText = "text/plain";
@@ -101,6 +105,8 @@ public static class MimeTypes
     {
         if (contentType == null || matchesContentType == null)
             return false;
+        if (contentType == matchesContentType) // exact match
+            return true;
             
         int start = -1, matchStart = -1, matchEnd = -1;
 
@@ -195,8 +201,6 @@ public static class MimeTypes
 
         switch (fileExt)
         {
-            case "jpeg":
-                return "image/jpeg";
             case "gif":
                 return "image/gif";
             case "png":
@@ -208,7 +212,11 @@ public static class MimeTypes
             case "webp":
                 return "image/webp";
 
+            case "jpeg":
             case "jpg":
+            case "jpe":
+            case "jif":
+            case "jfif":
                 return "image/jpeg";
 
             case "tif":
@@ -226,6 +234,8 @@ public static class MimeTypes
                 return "text/html";
 
             case "js":
+            case "mjs":
+            case "cjs":
                 return "text/javascript";
             case "ts":
                 return "text/typescript";
@@ -234,6 +244,8 @@ public static class MimeTypes
 
             case "csv":
                 return Csv;
+            case "jsonl":
+                return Jsonl;
             case "css":
                 return Css;
                     
@@ -273,6 +285,9 @@ public static class MimeTypes
             case "fsproj":
             case "vbproj":
                 return "text/xml";
+            
+            case "rss":
+                return Rss;
 
             case "txt":
             case "ps1":
@@ -352,6 +367,9 @@ public static class MimeTypes
                 return "application/vnd.openxmlformats-officedocument.presentationml.template";
             case "ppsx":
                 return "application/vnd.openxmlformats-officedocument.presentationml.slideshow";
+
+            case "pdf":
+                return Pdf;
 
             case "mdb":
                 return "application/vnd.ms-access";

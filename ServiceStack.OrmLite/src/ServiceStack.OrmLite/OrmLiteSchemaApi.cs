@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Linq.Expressions;
 using System.Threading;
@@ -226,5 +227,31 @@ namespace ServiceStack.OrmLite
         {
             dbConn.Exec(dbCmd => dbCmd.DropTable<T>());
         }
+
+        /// <summary>
+        /// Get a list of available user schemas for this connection 
+        /// </summary>
+        public static List<string> GetSchemas(this IDbConnection dbConn)
+        {
+            return dbConn.Exec(dbCmd => dbConn.GetDialectProvider().GetSchemas(dbCmd));
+        }
+
+        /// <summary>
+        /// Get available user Schemas and their tables for this connection 
+        /// </summary>
+        public static Dictionary<string, List<string>> GetSchemaTables(this IDbConnection dbConn)
+        {
+            return dbConn.Exec(dbCmd => dbConn.GetDialectProvider().GetSchemaTables(dbCmd));
+        }
+
+        /// <summary>
+        /// Alter tables by adding properties for missing columns and removing properties annotated with [RemoveColumn]
+        /// </summary>
+        public static void Migrate<T>(this IDbConnection dbConn) => dbConn.Migrate(typeof(T));
+
+        /// <summary>
+        /// Apply schema changes by Migrate in reverse to revert changes
+        /// </summary>
+        public static void Revert<T>(this IDbConnection dbConn) => dbConn.Revert(typeof(T));
     }
 }

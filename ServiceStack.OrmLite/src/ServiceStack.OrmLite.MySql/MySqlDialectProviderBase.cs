@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -50,6 +51,8 @@ namespace ServiceStack.OrmLite.MySql
                 { OrmLiteVariables.False, SqlBool(false) },                
             };
         }
+
+        public override bool SupportsSchema => false;
 
         public static string RowVersionTriggerFormat = "{0}RowVersionUpdateTrigger";
 
@@ -319,6 +322,14 @@ namespace ServiceStack.OrmLite.MySql
 		  "ZEROFILL",
         }, StringComparer.OrdinalIgnoreCase);
 
+        public override void Init(string connectionString)
+        {
+	        if (connectionString.ToLower().Contains("allowloadlocalinfile=true"))
+	        {
+		        AllowLoadLocalInfile = true;
+	        }
+        }
+
         public override string GetLoadChildrenSubSelect<From>(SqlExpression<From> expr)
         {
 	        // Workaround for: MySQL - This version of MySQL doesn't yet support 'LIMIT & IN/ALL/ANY/SOME subquery
@@ -513,18 +524,29 @@ namespace ServiceStack.OrmLite.MySql
 
             return sql;
         }
-        
-        public override bool DoesSchemaExist(IDbCommand dbCmd, string schemaName)
+
+        public override List<string> GetSchemas(IDbCommand dbCmd)
         {
-            // schema is prefixed to table name
-            return true;
+	        var sql = "SELECT DISTINCT TABLE_SCHEMA FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'sys', 'mysql')";
+	        return dbCmd.SqlColumn<string>(sql);
         }
+
+        public override Dictionary<string, List<string>> GetSchemaTables(IDbCommand dbCmd)
+        {
+	        var sql = "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'sys', 'mysql')";
+	        return dbCmd.Lookup<string, string>(sql);
+        }
+        
+        public override bool DoesSchemaExist(IDbCommand dbCmd, string schemaName) => false;
 
         public override string ToCreateSchemaStatement(string schemaName)
         {
             // https://mariadb.com/kb/en/library/create-database/
             return $"SELECT 1";
         }
+        
+        public override string ToDropForeignKeyStatement(string schema, string table, string foreignKeyName) =>
+	        $"ALTER TABLE {GetQuotedTableName(table, schema)} DROP FOREIGN KEY {GetQuotedName(foreignKeyName)};";
 
         public override string GetColumnDefinition(FieldDefinition fieldDef)
         {

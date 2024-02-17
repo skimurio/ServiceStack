@@ -16,6 +16,7 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
+using ServiceStack.Logging;
 
 namespace ServiceStack
 {
@@ -172,8 +173,7 @@ namespace ServiceStack
             }
         }
 
-        private readonly ConcurrentDictionary<Tuple<Type, Type>, ExecuteInternalDelegate> execFnCache =
-            new ConcurrentDictionary<Tuple<Type, Type>, ExecuteInternalDelegate>();
+        private readonly ConcurrentDictionary<Tuple<Type, Type>, ExecuteInternalDelegate> execFnCache = new();
 
         ExecuteInternalDelegate ResolveExecute<TResponse>(object requestDto)
         {
@@ -189,8 +189,7 @@ namespace ServiceStack
             return fn;
         }
 
-        private readonly ConcurrentDictionary<Tuple<Type, Type>, ExecuteInternalDelegate> streamFnCache =
-            new ConcurrentDictionary<Tuple<Type, Type>, ExecuteInternalDelegate>();
+        private readonly ConcurrentDictionary<Tuple<Type, Type>, ExecuteInternalDelegate> streamFnCache = new();
 
         ExecuteInternalDelegate ResolveStream<TResponse>(object requestDto)
         {
@@ -691,7 +690,7 @@ namespace ServiceStack
     
     public class MetaTypeConfig<T>
     {
-        public static MetaTypeConfig<T> Instance { get; set; } = new MetaTypeConfig<T>();
+        public static MetaTypeConfig<T> Instance { get; set; } = new();
 
         public static MetaType metaType;
 
@@ -713,12 +712,19 @@ namespace ServiceStack
                 Type[] typeArgs = new Type[1];
                 foreach(var subType in allTypes)
                 {
-                    if (subType.BaseType == typeof(T))
+                    if (subType.BaseType == typeof(T) && !subType.ContainsGenericParameters)
                     {
                         // touch MetaTypeConfig<subType>.Instance to force it to register if not already
                         typeArgs[0] = subType;
-                        _ = typeof(MetaTypeConfig<>).MakeGenericType(typeArgs)
-                            .GetProperty(nameof(Instance))?.GetValue(null);
+                        try
+                        {
+                            _ = typeof(MetaTypeConfig<>).MakeGenericType(typeArgs)
+                                .GetProperty(nameof(Instance))?.GetValue(null);
+                        }
+                        catch (Exception e)
+                        {
+                            LogManager.GetLogger(typeof(MetaTypeConfig)).Error("Could not create MetaTypeConfig<T> for " + typeof(T).Name, e);
+                        }
                     }
                 }
             }

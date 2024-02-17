@@ -18,8 +18,7 @@ namespace ServiceStack
     /// </summary>
     public static class UrlExtensions
     {
-        private static readonly ConcurrentDictionary<Type, List<RestRoute>> routesCache =
-            new ConcurrentDictionary<Type, List<RestRoute>>();
+        private static readonly ConcurrentDictionary<Type, List<RestRoute>> routesCache = new();
 
         public static string ToRelativeUri(this IReturn requestDto, string httpMethod, string formatFallbackToPredefinedRoute = null)
         {
@@ -95,92 +94,6 @@ namespace ServiceStack
             return predefinedRoute;
         }
 
-        public static string GetMetadataPropertyType(this Type type)
-        {
-            return GetOperationName(type);
-        }
-
-        public static string GetOperationName(this Type type)
-        {
-            //Need to expand Arrays of Generic Types like Nullable<Byte>[]
-            if (type.IsArray)
-            {
-                return type.GetElementType().ExpandTypeName() + "[]";
-            }
-
-            string fullname = type.FullName;
-            int genericPrefixIndex = type.IsGenericParameter ? 1 : 0;
-                
-            if (fullname == null)
-                return genericPrefixIndex > 0 ? "'" + type.Name : type.Name;
-
-            int startIndex = type.Namespace != null ? type.Namespace.Length + 1: 0; //trim namespace + "."
-            int endIndex = fullname.IndexOf("[[", startIndex, StringComparison.Ordinal);  //Generic Fullname
-            if (endIndex == -1)
-                endIndex = fullname.Length;
-
-            char[] op = new char[endIndex - startIndex + genericPrefixIndex];
-
-            for(int i = startIndex; i < endIndex; i++)
-            {
-                var cur = fullname[i];
-                op[i - startIndex + genericPrefixIndex] = cur != '+' ? cur : '.';
-            }
-
-            if (genericPrefixIndex > 0)
-                op[0] = '\'';
-            
-            return new string(op);
-        }
-
-        public static string GetFullyQualifiedName(this Type type)
-        {
-            var sb = StringBuilderCache.Allocate().Append(type.Name);
-            if (type.IsGenericType)
-            {
-                var genericMarker = type.Name.IndexOf('`');
-                if (genericMarker > 0)
-                {
-                    sb.Clear();
-                    sb.Append(type.Name.Remove(genericMarker));
-                }
-                sb.Append('<');
-                var typeParameters = type.GetGenericArguments();
-                for (var i = 0; i < typeParameters.Length; ++i)
-                {
-                    var paramName = typeParameters[i].Name;
-                    sb.Append(i == 0 ? paramName : "," + paramName);
-                }
-                sb.Append('>');
-            }
-            return StringBuilderCache.ReturnAndFree(sb);
-        }
-
-        public static string ExpandTypeName(this Type type)
-        {
-            if (type.IsGenericType)
-                return ExpandGenericTypeName(type);
-
-            return type.GetOperationName();
-        }
-
-        public static string ExpandGenericTypeName(Type type)
-        {
-            var nameOnly = type.Name.LeftPart('`');
-
-            var sb = StringBuilderCache.Allocate();
-            foreach (var arg in type.GetGenericArguments())
-            {
-                if (sb.Length > 0)
-                    sb.Append(',');
-
-                sb.Append(arg.ExpandTypeName());
-            }
-
-            var fullName = $"{nameOnly}<{StringBuilderCache.ReturnAndFree(sb)}>";
-            return fullName;
-        }
-
         public static string ToApiUrl(this Type requestType) =>
             "/api".CombineWith(requestType.GetOperationName());
 
@@ -253,6 +166,68 @@ namespace ServiceStack
             }
 
             return urlFilter == null ? url : urlFilter.ToUrl(url);
+        }
+
+        public static string GetOperationName(this Type type)
+        {
+            if (type.IsArray)
+            {
+                return type.GetCollectionType().Name + "[]";
+            }
+            return type.Name.LastRightPart('+');
+        }
+
+        public static string GetFullyQualifiedName(this Type type)
+        {
+            var sb = StringBuilderCache.Allocate().Append(type.Name);
+            if (type.IsGenericType)
+            {
+                var genericMarker = type.Name.IndexOf('`');
+                if (genericMarker > 0)
+                {
+                    sb.Clear();
+                    sb.Append(type.Name.Remove(genericMarker));
+                }
+                sb.Append('<');
+                var typeParameters = type.GetGenericArguments();
+                for (var i = 0; i < typeParameters.Length; ++i)
+                {
+                    var paramName = typeParameters[i].Name;
+                    sb.Append(i == 0 ? paramName : "," + paramName);
+                }
+                sb.Append('>');
+            }
+            return StringBuilderCache.ReturnAndFree(sb);
+        }
+
+        public static string ExpandTypeName(this Type type)
+        {
+            if (type.IsGenericType)
+                return ExpandGenericTypeName(type);
+
+            return type.GetOperationName();
+        }
+
+        public static string ExpandGenericTypeName(Type type)
+        {
+            var nameOnly = type.Name.LeftPart('`');
+
+            var sb = StringBuilderCache.Allocate();
+            foreach (var arg in type.GetGenericArguments())
+            {
+                if (sb.Length > 0)
+                    sb.Append(',');
+
+                sb.Append(arg.ExpandTypeName());
+            }
+
+            var fullName = $"{nameOnly}<{StringBuilderCache.ReturnAndFree(sb)}>";
+            return fullName;
+        }
+
+        public static string GetMetadataPropertyType(this Type type)
+        {
+            return GetOperationName(type);
         }
 
         private static List<RestRoute> GetRoutesForType(Type requestType)
@@ -330,6 +305,18 @@ namespace ServiceStack
             }
             return to;
         }
+
+        public static void AppendQueryParam(this StringBuilder sb, string key, object value)
+        {
+            var qsName = JsConfig.TextCase == TextCase.SnakeCase
+                ? key.ToLowercaseUnderscore()
+                : key;
+
+            sb.Append(qsName)
+                .Append('=')
+                .Append(RestRoute.FormatQueryParameterValue(value))
+                .Append('&');
+        }
     }
 
     public class RestRoute
@@ -363,18 +350,19 @@ namespace ServiceStack
             return Uri.EscapeDataString(valueString);
         };
 
-        private static readonly char[] PathSeparatorChars = { '/', '.' };
+        private static readonly char[] PathSeparatorChars = ['/', '.'];
+        private static readonly char[] VerbSeparatorChars = [',', ' '];
         private const string VariablePrefix = "{";
         private const char VariablePrefixChar = '{';
         private const string VariablePostfix = "}";
         private const char VariablePostfixChar = '}';
 
-        private readonly IDictionary<string, RouteMember> queryProperties = new Dictionary<string, RouteMember>();
+        private readonly IDictionary<string, RouteMember> queryProperties;
         private readonly IDictionary<string, RouteMember> variablesMap = new Dictionary<string, RouteMember>(PclExport.Instance.InvariantComparerIgnoreCase);
 
         public RestRoute(Type type, string path, string verbs, int priority)
         {
-            this.HttpMethods = (verbs ?? Empty).Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            this.HttpMethods = (verbs ?? Empty).Split(VerbSeparatorChars, StringSplitOptions.RemoveEmptyEntries);
             this.Type = type;
             this.Path = path;
             this.Priority = priority;
@@ -382,10 +370,8 @@ namespace ServiceStack
             this.queryProperties = GetQueryProperties(type);
             foreach (var variableName in GetUrlVariables(path))
             {
-                var safeVarName = variableName.TrimEnd('*');
-
-                RouteMember propertyInfo;
-                if (!this.queryProperties.TryGetValue(safeVarName, out propertyInfo))
+                var safeVarName = variableName.Trim('*');
+                if (!this.queryProperties.TryGetValue(safeVarName, out var propertyInfo))
                 {
                     this.AppendError($"Variable '{variableName}' does not match any property.");
                     continue;
@@ -435,7 +421,7 @@ namespace ServiceStack
             {
                 var property = variable.Value;
                 var value = property.GetValue(request);
-                var isWildCard = variable.Key.EndsWith("*");
+                var isWildCard = variable.Key.StartsWith("*") || variable.Key.EndsWith("*");
                 if (value == null && !isWildCard)
                 {
                     unmatchedVariables.Add(variable.Key);
@@ -462,8 +448,7 @@ namespace ServiceStack
 
         internal static string GetQueryString(object request, IDictionary<string, RouteMember> propertyMap)
         {
-            var result = StringBuilderCache.Allocate();
-
+            var sb = StringBuilderCache.Allocate();
             foreach (var queryProperty in propertyMap)
             {
                 if (queryProperty.Value.IgnoreInQueryString)
@@ -476,18 +461,19 @@ namespace ServiceStack
                 if (ClientConfig.SkipEmptyArrays && value is Array array && array.Length == 0)
                     continue;
 
-                var qsName = JsConfig.TextCase == TextCase.SnakeCase
-                    ? queryProperty.Key.ToLowercaseUnderscore()
-                    : queryProperty.Key;
-
-                result.Append(qsName)
-                    .Append('=')
-                    .Append(FormatQueryParameterValue(value))
-                    .Append('&');
+                sb.AppendQueryParam(queryProperty.Key, value);
+            }
+            
+            if (request is IHasQueryParams { QueryParams: {} } qs)
+            {
+                foreach (var entry in qs.QueryParams)
+                {
+                    sb.AppendQueryParam(entry.Key, entry.Value);
+                }
             }
 
-            if (result.Length > 0) result.Length -= 1;
-            return StringBuilderCache.ReturnAndFree(result);
+            if (sb.Length > 0) sb.Length -= 1;
+            return StringBuilderCache.ReturnAndFree(sb);
         }
 
         internal static IDictionary<string, RouteMember> GetQueryProperties(Type requestType)

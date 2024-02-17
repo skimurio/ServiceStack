@@ -3,13 +3,21 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using ServiceStack.Host;
 using ServiceStack.HtmlModules;
 using ServiceStack.Host.Handlers;
 using ServiceStack.IO;
 using ServiceStack.Text;
 using ServiceStack.Web;
+
+#if NET8_0_OR_GREATER
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+#endif
 
 namespace ServiceStack;
 
@@ -30,7 +38,7 @@ public class HtmlModulesFeature : IPlugin, Model.IHasStringId
 
     /// <summary>
     /// Define custom html handlers, e.g:
-    /// &lt;!--shared:Brand,Input--&gt;
+    /// &lt;!--shared:custom-meta--&gt;
     /// &lt;!--file:/path/to/single.html--&gt; or /*file:/path/to/single.txt*/
     /// &lt;!--files:/dir/components/*.html--&gt; or /*files:/dir/*.css*/
     /// </summary>
@@ -38,6 +46,11 @@ public class HtmlModulesFeature : IPlugin, Model.IHasStringId
     {
         new FileHandler("file"),
         new FilesHandler("files"),
+        new FilesHandler("module")
+        {
+            Header = FilesTransformer.ModuleHeader,
+            Footer = FilesTransformer.ModuleFooter,
+        },
         new FileHandler("vfs") { VirtualFilesResolver = ctx => HostContext.VirtualFiles },
         new FileHandler("vfs[]") { VirtualFilesResolver = ctx => HostContext.VirtualFileSources },
         new GatewayHandler("gateway"),
@@ -108,6 +121,10 @@ public class HtmlModulesFeature : IPlugin, Model.IHasStringId
             component.Feature = this;
             component.VirtualFiles ??= VirtualFiles;
             component.FileContentsResolver ??= FileContentsResolver;
+            foreach (var configure in component.OnConfigure)
+            {
+                configure(appHost, component);
+            }
             foreach (var configure in OnConfigure)
             {
                 configure(appHost, component);
@@ -177,8 +194,11 @@ public class HtmlModule
 
     public string IndexFile { get; set; } = "index.html";
     public List<string> PublicPaths { get; set; } = new() {
-        "/assets"
+        "/assets",
+        "/lib",
     };
+
+    public List<string> DynamicPageQueryStrings { get; set; } = new();
 
     public Dictionary<string, Func<HtmlModuleContext, ReadOnlyMemory<byte>>> Tokens { get; set; }
     public List<IHtmlModulesHandler> Handlers { get; set; } = new();
@@ -189,6 +209,8 @@ public class HtmlModule
     /// File resolver to use to read file contents
     /// </summary>
     public Func<IVirtualFile, string>? FileContentsResolver { get; set; }
+    
+    public List<Action<IAppHost, HtmlModule>> OnConfigure { get; set; } = new();
 
     public HtmlModule(string dirPath, string? basePath=null)
     {
@@ -349,26 +371,31 @@ public class HtmlModule
         zipCache.Clear();
         indexFragments = null;
     }
-    
-    public void Register(IAppHost appHost)
-    {
-        VirtualFiles ??= appHost.VirtualFiles;
-        var fragments = GetIndexFragments(); //force parsing
-        if (fragments.Length == 0) //Feature.IgnoreIfError
-            return;
 
-        appHost.RawHttpHandlers.Add(req =>
+    public Func<IHttpRequest, HttpAsyncTaskHandler?> GetHandler(IAppHost appHost)
+    {
+        return req =>
         {
             if (!req.PathInfo.StartsWith(BasePath))
                 return null;
-            
+
             foreach (var path in PublicPaths)
             {
                 if (req.PathInfo.StartsWith(BasePath + path))
                 {
-                    var file = VirtualFiles.GetFile(DirPath + req.PathInfo.Substring(BasePath.Length));
+                    var file = VirtualFiles!.GetFile(DirPath + req.PathInfo.Substring(BasePath.Length));
                     return file != null
                         ? new StaticFileHandler(file)
+                        {
+                            Filter = appHost.Config.DebugMode
+                                ? (request, response, _) =>
+                                {
+                                    response.AddHeader(HttpHeaders.CacheControl, "no-cache, no-store, must-revalidate");
+                                    response.AddHeader(HttpHeaders.Pragma, "no-cache");
+                                    response.AddHeader(HttpHeaders.Expires, "0");
+                                }
+                                : null
+                        }
                         : new NotFoundHttpHandler();
                 }
             }
@@ -377,36 +404,61 @@ public class HtmlModule
             {
                 try
                 {
-                    if (EnableHttpCaching == true && indexFileETag != null)
+                    async Task RenderTo(Stream stream)
                     {
-                        httpRes.AddHeader(HttpHeaders.ETag, indexFileETag);
-                        if (httpRes.GetHeader(HttpHeaders.CacheControl) == null)
-                            httpRes.AddHeader(HttpHeaders.CacheControl, CacheControl ?? HtmlModulesFeature.DefaultCacheControl);
+                        httpRes.ContentType = MimeTypes.HtmlUtf8;
 
-                        if (req.ETagMatch(indexFileETag))
+                        var fragments = GetIndexFragments();
+                        var ctx = new HtmlModuleContext(this, httpReq);
+                        foreach (var fragment in fragments)
                         {
-                            httpRes.EndNotModified();
-                            return;
+                            await fragment.WriteToAsync(ctx, stream).ConfigAwait();
                         }
                     }
 
-                    if (EnableCompression == true && await TryReturnCompressedResponse(httpReq, httpRes).ConfigAwait())
-                        return;
-                    
-                    var fragments = GetIndexFragments();
-                    using var ms = MemoryStreamFactory.GetStream();
-                    var ctx = new HtmlModuleContext(this, httpReq);
-                    foreach (var fragment in fragments)
+                    var dynamicUi = DynamicPageQueryStrings.Any(x => httpReq.QueryString[x] != null);
+                    if (dynamicUi)
                     {
-                        await fragment.WriteToAsync(ctx, ms).ConfigAwait();
+                        await RenderTo(httpRes.OutputStream);
+                        return;
                     }
-                    httpRes.ContentType = MimeTypes.Html;
+
+                    if (!dynamicUi)
+                    {
+                        if (EnableHttpCaching == true && indexFileETag != null)
+                        {
+                            httpRes.ContentType ??= MimeTypes.HtmlUtf8;
+                            httpRes.AddHeader(HttpHeaders.ContentType, httpRes.ContentType);
+
+                            httpRes.AddHeader(HttpHeaders.ETag, indexFileETag);
+                            if (httpRes.GetHeader(HttpHeaders.CacheControl) == null)
+                                httpRes.AddHeader(HttpHeaders.CacheControl,
+                                    CacheControl ?? HtmlModulesFeature.DefaultCacheControl);
+
+                            if (req.ETagMatch(indexFileETag))
+                            {
+                                httpRes.EndNotModified();
+                                return;
+                            }
+                        }
+
+                        if (EnableCompression == true &&
+                            await TryReturnCompressedResponse(httpReq, httpRes).ConfigAwait())
+                            return;
+                    }
+
+                    using var ms = MemoryStreamFactory.GetStream();
+                    await RenderTo(ms);
                     ms.Position = 0;
 
                     // If EnableHttpCaching, calculate ETag hash from entire processed file 
                     if (EnableHttpCaching == true && indexFileETag == null)
                     {
                         indexFileETag = ms.ToMd5Hash().Quoted();
+                        httpRes.AddHeader(HttpHeaders.ETag, indexFileETag);
+                        if (httpRes.GetHeader(HttpHeaders.CacheControl) == null)
+                            httpRes.AddHeader(HttpHeaders.CacheControl,
+                                CacheControl ?? HtmlModulesFeature.DefaultCacheControl);
                     }
 
                     if (EnableCompression == true)
@@ -423,7 +475,34 @@ public class HtmlModule
                     await httpRes.WriteError(ex).ConfigAwait();
                 }
             });
+        };
+    }
+    
+    public void Register(IAppHost appHost)
+    {
+        VirtualFiles ??= appHost.VirtualFiles;
+        var fragments = GetIndexFragments(); //force parsing
+        if (fragments.Length == 0) //Feature.IgnoreIfError
+            return;
+
+        var handlerFn = GetHandler(appHost);
+        appHost.RawHttpHandlers.Add(handlerFn);
+        
+#if NET8_0_OR_GREATER
+        var host = (IAppHostNetCore)appHost;
+        host.MapEndpoints(routeBuilder =>
+        {
+            routeBuilder.MapGet(BasePath + "/{*path}", httpContext => {
+                    var req = httpContext.ToRequest();
+                    var handler = handlerFn(req);
+                    if (handler != null)
+                        return handler.ProcessRequestAsync(req, req.Response, httpContext.Request.Path);
+                    return Task.CompletedTask;
+                })
+                .WithMetadata<string>(name:BasePath, tag:GetType().Name, contentType:MimeTypes.Html, additionalContentTypes:[MimeTypes.JavaScript]);
         });
+#endif
+
     }
 
     private async Task<bool> TryReturnCompressedResponse(IRequest httpReq, IResponse httpRes)
@@ -436,7 +515,8 @@ public class HtmlModule
         {
             var zipBytes = zipCache.GetOrAdd(compressor.Encoding, _ => compressor.Compress(cachedBytes!));
             httpRes.AddHeader(HttpHeaders.ContentEncoding, compressor.Encoding);
-            await httpRes.OutputStream.WriteAsync(zipBytes);
+            httpRes.AddHeader(HttpHeaders.ContentType, httpRes.ContentType);
+            await httpRes.WriteAsync(zipBytes);
             return true;
         }
         return false;

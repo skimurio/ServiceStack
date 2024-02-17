@@ -1,3 +1,4 @@
+using System;
 using System.Data;
 using ServiceStack.Data;
 
@@ -12,10 +13,12 @@ namespace ServiceStack.OrmLite
 
         public OrmLiteCommand(OrmLiteConnection dbConn, IDbCommand dbCmd)
         {
-            this.dbConn = dbConn;
-            this.dbCmd = dbCmd;
+            this.dbConn = dbConn ?? throw new ArgumentNullException(nameof(dbConn));
+            this.dbCmd = dbCmd ?? throw new ArgumentNullException(nameof(dbCmd));
             this.DialectProvider = dbConn.GetDialectProvider();
         }
+
+        public Guid ConnectionId => dbConn.ConnectionId;
 
         public void Dispose()
         {

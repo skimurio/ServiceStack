@@ -421,6 +421,8 @@ namespace ServiceStack.OrmLite
 
         internal static T SingleById<T>(this IDbCommand dbCmd, object value)
         {
+            if (value == null) 
+                throw new ArgumentNullException(nameof(value));
             SetFilter<T>(dbCmd, ModelDefinition<T>.PrimaryKeyName, value);
             return dbCmd.ConvertTo<T>();
         }
@@ -559,7 +561,7 @@ namespace ServiceStack.OrmLite
             return dbCmd.ConvertToList<T>();
         }
 
-        internal static List<T> SqlColumn<T>(this IDbCommand dbCmd, string sql, object anonType = null)
+        public static List<T> SqlColumn<T>(this IDbCommand dbCmd, string sql, object anonType = null)
         {
             dbCmd.SetParameters<T>(anonType, excludeDefaults: false, sql: ref sql).CommandText = sql;
             return dbCmd.ConvertToList<T>();
@@ -776,7 +778,7 @@ namespace ServiceStack.OrmLite
             while (reader.Read())
             {
                 var value = dialectProvider.FromDbValue(reader, 0, typeof(T));
-                if (value == DBNull.Value)
+                if (value == DBNull.Value || value == null)
                     value = default(T);
 
                 columValues.Add((T)value);
@@ -808,7 +810,7 @@ namespace ServiceStack.OrmLite
             return columValues;
         }
 
-        internal static Dictionary<K, List<V>> Lookup<K, V>(this IDbCommand dbCmd, string sql, object anonType = null)
+        public static Dictionary<K, List<V>> Lookup<K, V>(this IDbCommand dbCmd, string sql, object anonType = null)
         {
             return dbCmd.SetParameters(anonType.ToObjectDictionary(), false, sql:ref sql).Lookup<K, V>(sql);
         }
