@@ -49,10 +49,13 @@ public static class Plugins
     public const string AdminIdentityUsers = "identityusers";
     public const string AdminRedis = "adminredis";
     public const string AdminDatabase = "admindb";
+    public const string AdminCommands = "commands";
+    public const string ApiKeys = "apikeys";
     public const string Ui = "ui";
     public const string FileUpload = "filesupload";
     public const string Profiling = "profiling";
     public const string RunAsAdmin = "runasadmin";
+    public const string BackgroundJobs = "backgroundjobs";
 
     public static void AddToAppMetadata(this IAppHost appHost, Action<AppMetadata> fn)
     {
@@ -99,6 +102,11 @@ public interface IPostInitPlugin
     void AfterPluginsLoaded(IAppHost appHost);
 }
 
+public interface IRequireRegistration
+{
+    void Register(IAppHost appHost);
+}
+
 /// <summary>
 /// Callback for AuthProviders to register callbacks with AuthFeature
 /// </summary>
@@ -106,6 +114,14 @@ public interface IAuthPlugin
 {
     void Configure(IServiceCollection services, AuthFeature feature);
     void Register(IAppHost appHost, AuthFeature feature);
+}
+
+/// <summary>
+/// Allow Auth Providers to initialize the AuthFeature plugin
+/// </summary>
+public interface IAuthInit
+{
+    void Init(AuthFeature feature);
 }
 
 public interface IMsgPackPlugin { }         //Marker for MsgPack plugin

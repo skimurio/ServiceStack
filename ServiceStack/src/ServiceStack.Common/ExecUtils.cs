@@ -163,6 +163,57 @@ public static class ExecUtils
         throw new TimeoutException($"Exceeded timeout of {timeOut.Value}");
     }
 
+    public static bool WaitUntilTrue(Func<bool> action, TimeSpan? timeOut = null)
+    {
+        timeOut ??= TimeSpan.FromMilliseconds(MaxBackOffMs);
+        var num = 0;
+        var utcNow = DateTime.UtcNow;
+        while (DateTime.UtcNow - utcNow < timeOut.Value)
+        {
+            num++;
+            if (action())
+            {
+                return true;
+            }
+            SleepBackOffMultiplier(num);
+        }
+        return false;
+    }
+
+    public static async Task<bool> WaitUntilTrueAsync(Func<bool> action, TimeSpan? timeOut = null)
+    {
+        timeOut ??= TimeSpan.FromMilliseconds(MaxBackOffMs);
+        var num = 0;
+        var utcNow = DateTime.UtcNow;
+        while (DateTime.UtcNow - utcNow < timeOut.Value)
+        {
+            num++;
+            if (action())
+            {
+                return true;
+            }
+            await DelayBackOffMultiplierAsync(num);
+        }
+        return false;
+    }
+
+    public static async Task<bool> WaitUntilTrueAsync(Func<Task<bool>> action, TimeSpan? timeOut = null)
+    {
+        timeOut ??= TimeSpan.FromMilliseconds(MaxBackOffMs);
+        var num = 0;
+        var utcNow = DateTime.UtcNow;
+        while (DateTime.UtcNow - utcNow < timeOut.Value)
+        {
+            num++;
+            if (await action())
+            {
+                return true;
+            }
+            await DelayBackOffMultiplierAsync(num);
+        }
+        return false;
+    }
+
     public static void RetryOnException(Action action, TimeSpan? timeOut)
     {
         var i = 0;
@@ -355,6 +406,44 @@ public static class ExecUtils
 
         var retries = Math.Min(retriesAttempted, MaxRetries);
         return (int)Math.Min((1L << retries) * baseDelay, maxBackOffMs);
+    }
+
+    public static class StaticRandom
+    {
+#if NET6_0_OR_GREATER
+        public static int Next(int maxValue) => Random.Shared.Next(maxValue);
+#else
+        static int seed = Environment.TickCount;
+        static readonly ThreadLocal<Random> random = new(() => new Random(Interlocked.Increment(ref seed)));
+        public static int Next(int maxValue)
+        {
+            return random.Value.Next(maxValue);
+        }
+#endif
+    }
+    
+    /// <summary>
+    /// Calculates delay for retrying an operation as per the retryPolicy
+    /// </summary>
+    /// <param name="retryAttempt"></param>
+    /// <param name="retry"></param>
+    /// <returns></returns>
+    public static int CalculateRetryDelayMs(int retryAttempt, RetryPolicy retry)
+    {
+        var retryDelayMs = retry.DelayMs < 0 ? BaseDelayMs : retry.DelayMs;
+        var retryMaxDelayMs = retry.MaxDelayMs < 0 ? MaxBackOffMs : retry.MaxDelayMs;
+        
+        var delayMs = !retry.DelayFirst && retryAttempt == 1
+            ? 0
+            : retry.Behavior switch {
+                RetryBehavior.LinearBackoff => retryAttempt * retryDelayMs,
+                RetryBehavior.ExponentialBackoff => 
+                    (int)Math.Min((1L << retryAttempt) * retryDelayMs, retryMaxDelayMs),
+                RetryBehavior.FullJitterBackoff => 
+                    StaticRandom.Next((int)Math.Min((1L << retryAttempt) * retryDelayMs, retryMaxDelayMs)),
+                _ => retryDelayMs
+            };
+        return Math.Min(delayMs, retryMaxDelayMs);
     }
 
     /// <summary>

@@ -79,6 +79,9 @@ public class ServiceStackServicesOptions
         typeof(ICacheClientAsync),
         typeof(MemoryCacheClient),
         typeof(IMessageFactory),
+        typeof(ServiceController),
+        typeof(HttpUtils),
+        typeof(Auth.IPasswordHasher),
     ];
     
     internal bool ShouldAutoRegister<T>() => AutoRegister.Contains(typeof(T));
@@ -291,5 +294,7 @@ public class ServiceStackOptions
     /// </summary>
     public static System.Text.Json.JsonSerializerOptions SystemJsonOptions => Text.TextConfig.SystemJsonOptions;
 }
+
+public record struct EndpointOptions(bool RequireAuth=true);
 
 #endif

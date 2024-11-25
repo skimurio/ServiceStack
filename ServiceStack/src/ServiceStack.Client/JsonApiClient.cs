@@ -53,9 +53,6 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
 
     public JsonApiClient(string baseUri)
     {
-        this.Format = "json";
-        this.Headers = new NameValueCollection();
-        this.CookieContainer = new CookieContainer();
         SetBaseUri(this.BaseUri = baseUri);
         JsConfig.InitStatics();
     }
@@ -67,7 +64,7 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
     public HttpMessageHandler? HttpMessageHandler { get; set; }
 
     public HttpClient? HttpClient { get; set; }
-    public CookieContainer? CookieContainer { get; set; }
+    public CookieContainer CookieContainer { get; set; } = new();
 
     public ResultsFilterHttpDelegate? ResultsFilter { get; set; }
     public ResultsFilterHttpResponseDelegate? ResultsFilterResponse { get; set; }
@@ -75,7 +72,7 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
 
     public string BaseUri { get; set; }
 
-    public string? Format { get; private set; }
+    public string Format { get; private set; } = "json";
     public string? RequestCompressionType { get; set; }
     public string? ContentType = MimeTypes.Json;
 
@@ -102,7 +99,7 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
     /// <summary>
     /// Gets the collection of headers to be added to outgoing requests.
     /// </summary>
-    public NameValueCollection? Headers { get; private set; }
+    public NameValueCollection Headers { get; private set; } = [];
 
     public Action<HttpRequestMessage>? RequestFilter { get; set; }
     public static Action<HttpRequestMessage>? GlobalRequestFilter { get; set; }
@@ -122,7 +119,7 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
 
     /// <summary>
     /// Replace the Base reply/oneway paths to use a different prefix
-    /// </summary>
+    /// </summary>  
     public string UseBasePath
     {
         set
@@ -164,7 +161,7 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
     {
         this.PopulateRequestMetadata(requestDto);
         return ToAbsoluteUrl(TypedUrlResolver?.Invoke(this, httpMethod, requestDto) 
-            ?? requestDto.ToUrl(httpMethod, fallback:requestType => BasePath + requestType.GetOperationName()));
+                             ?? requestDto.ToUrl(httpMethod, fallback:requestType => BasePath + requestType.GetOperationName()));
     }
 
     public HttpClient GetHttpClient()
@@ -210,12 +207,11 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
 
     public void AddHeader(string name, string value)
     {
-        Headers ??= new NameValueCollection();
         Headers[name] = value;
     }
 
-    public void DeleteHeader(string name) => Headers?.Remove(name);
-    public void ClearHeaders() => Headers?.Clear();
+    public void DeleteHeader(string name) => Headers.Remove(name);
+    public void ClearHeaders() => Headers.Clear();
 
     private int activeAsyncRequests;
     
@@ -1380,14 +1376,34 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
         return result;
     }
 
+    public TResponse PostFileWithRequest<TResponse>(IReturn<TResponse> request, UploadFile file)
+    {
+        return PostFilesWithRequest(ResolveTypedUrl(GetHttpMethod(request) ?? HttpMethods.Post, request), request, [file]);
+    }
+
+    public Task<TResponse> PostFileWithRequestAsync<TResponse>(IReturn<TResponse> request, UploadFile file, CancellationToken token = default)
+    {
+        return PostFilesWithRequestAsync<TResponse>(ResolveTypedUrl(HttpMethods.Post, request), request, [file], token);
+    }
+
     public Task<TResponse> PostFilesWithRequestAsync<TResponse>(object request, IEnumerable<UploadFile> files, CancellationToken token = default)
     {
         return PostFilesWithRequestAsync<TResponse>(ResolveTypedUrl(HttpMethods.Post, request), request, files.ToArray(), token);
     }
 
+    public Task<TResponse> PostFilesWithRequestAsync<TResponse>(IReturn<TResponse> request, UploadFile[] files, CancellationToken token = default)
+    {
+        return PostFilesWithRequestAsync<TResponse>(ResolveTypedUrl(HttpMethods.Post, request), (object) request, files, token);
+    }
+
     public Task<TResponse> PostFilesWithRequestAsync<TResponse>(string relativeOrAbsoluteUrl, object request, IEnumerable<UploadFile> files, CancellationToken token = default)
     {
         return PostFilesWithRequestAsync<TResponse>(ResolveUrl(HttpMethods.Post, relativeOrAbsoluteUrl), request, files.ToArray(), token);
+    }
+
+    public Task<TResponse> PostFilesWithRequestAsync<TResponse>(string relativeOrAbsoluteUrl, IReturn<TResponse> request, UploadFile[] files, CancellationToken token = default)
+    {
+        return PostFilesWithRequestAsync<TResponse>(ResolveUrl(HttpMethods.Post, relativeOrAbsoluteUrl), (object)request, files, token);
     }
 
     public virtual async Task<TResponse> PostFilesWithRequestAsync<TResponse>(string requestUri, object request, UploadFile[] files, CancellationToken token = default)
@@ -1441,9 +1457,19 @@ public class JsonApiClient : IJsonServiceClient, IHasCookieContainer, IServiceCl
         return PostFilesWithRequest<TResponse>(ResolveTypedUrl(GetHttpMethod(request) ?? HttpMethods.Post, request), request, files.ToArray());
     }
 
+    public TResponse PostFilesWithRequest<TResponse>(IReturn<TResponse> request, UploadFile[] files)
+    {
+        return PostFilesWithRequest<TResponse>(ResolveTypedUrl(HttpMethods.Post, request), (object) request, files);
+    }
+
     public TResponse PostFilesWithRequest<TResponse>(string relativeOrAbsoluteUrl, object request, IEnumerable<UploadFile> files)
     {
         return PostFilesWithRequest<TResponse>(ResolveUrl(GetHttpMethod(request) ?? HttpMethods.Post, relativeOrAbsoluteUrl), request, files.ToArray());
+    }
+
+    public TResponse PostFilesWithRequest<TResponse>(string relativeOrAbsoluteUrl, IReturn<TResponse> request, UploadFile[] files)
+    {
+        return PostFilesWithRequest<TResponse>(ResolveUrl(HttpMethods.Post, relativeOrAbsoluteUrl), (object)request, files);
     }
 
     public virtual TResponse PostFilesWithRequest<TResponse>(string requestUri, object request, UploadFile[] files)

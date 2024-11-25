@@ -68,7 +68,7 @@ public static class MimeTypes
         if (parts.Length == 1) return "." + parts[0].LeftPart('+').LeftPart(';');
         if (parts.Length == 2) return "." + parts[1].LeftPart('+').LeftPart(';');
 
-        throw new NotSupportedException("Unknown mimeType: " + mimeType);
+        throw new NotSupportedException("Unknown mimeType");
     }
         
     //Lower cases and trims left part of content-type prior ';'
@@ -297,7 +297,7 @@ public static class MimeTypes
                 return "text/sgml";
 
             case "mp3":
-                return "audio/mpeg3";
+                return "audio/mpeg";
 
             case "au":
             case "snd":

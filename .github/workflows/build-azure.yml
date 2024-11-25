@@ -11,11 +11,11 @@ permissions:
 
 jobs:
   build-azure:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.100'
           
@@ -30,7 +30,7 @@ jobs:
 
 # Azure tests need mocking.
 #      - name: Azure Tests
-#        run: dotnet test --framework net6.0 ./ServiceStack.Azure/tests/ServiceStack.Azure.Tests/ServiceStack.Azure.Tests.csproj  --logger 'trx;LogFileName=results.trx'
+#        run: dotnet test --framework net8.0 ./ServiceStack.Azure/tests/ServiceStack.Azure.Tests/ServiceStack.Azure.Tests.csproj  --logger 'trx;LogFileName=results.trx'
 #
 #      - name: Test Report
 #        uses: dorny/test-reporter@v1

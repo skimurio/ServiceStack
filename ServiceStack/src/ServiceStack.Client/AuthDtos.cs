@@ -43,9 +43,10 @@ public class AuthenticateResponse : IMeta, IHasResponseStatus, IHasSessionId, IH
     [DataMember(Order = 9)] public string ProfileUrl { get; set; }
     [DataMember(Order = 10)] public List<string> Roles { get; set; } 
     [DataMember(Order = 11)] public List<string> Permissions { get; set; } 
+    [DataMember(Order = 12)] public string AuthProvider { get; set; }
 
-    [DataMember(Order = 12)] public ResponseStatus ResponseStatus { get; set; }
-    [DataMember(Order = 13)] public Dictionary<string, string> Meta { get; set; }
+    [DataMember(Order = 13)] public ResponseStatus ResponseStatus { get; set; }
+    [DataMember(Order = 14)] public Dictionary<string, string> Meta { get; set; }
 }
 
 [ExcludeMetadata]
@@ -192,7 +193,7 @@ public class CancelRequestResponse : IHasResponseStatus, IMeta
 
 [ExcludeMetadata]
 [DataContract]
-[Route("/event-subscribers/{Id}", "POST")]
+[Route("/event-subscribers/{Id}")]
 public class UpdateEventSubscriber : IPost, IReturn<UpdateEventSubscriberResponse>
 {
     [DataMember(Order = 1)]
@@ -675,10 +676,161 @@ public partial class AdminQueryUsers : IGet, IReturn<AdminUsersResponse>
 }
 
 [DataContract]
-public class AdminUsersResponse : IHasResponseStatus
+public partial class AdminUsersResponse : IHasResponseStatus
 {
     [DataMember(Order = 1)] public List<Dictionary<string,object>> Results { get; set; }
     [DataMember(Order = 2)] public ResponseStatus ResponseStatus { get; set; }
+}
+
+[DataContract, ValidateIsAuthenticated, ExcludeMetadata]
+public class QueryUserApiKeys : IGet, IReturn<UserApiKeysResponse>
+{
+    [DataMember(Order = 1)] public int? Id { get; set; }
+    [DataMember(Order = 2)] public string Search { get; set; }
+    [DataMember(Order = 3)] public string OrderBy { get; set; }
+    [DataMember(Order = 4)] public int? Skip { get; set; }
+    [DataMember(Order = 5)] public int? Take { get; set; }
+}
+public partial class UserApiKeysResponse : IHasResponseStatus
+{
+    [DataMember(Order = 1)] public List<PartialApiKey> Results { get; set; }
+    [DataMember(Order = 2)] public ResponseStatus ResponseStatus { get; set; }
+}
+[DataContract, ValidateIsAuthenticated, ExcludeMetadata]
+public partial class CreateUserApiKey : IPost, IReturn<UserApiKeyResponse>
+{
+    [DataMember(Order = 1)] public string Name { get; set; }
+    [DataMember(Order = 2)] public List<string> Scopes { get; set; } = [];
+    [DataMember(Order = 3)] public List<string> Features { get; set; } = [];
+    [DataMember(Order = 4)] public List<string> RestrictTo { get; set; } = [];
+    [DataMember(Order = 5)] public DateTime? ExpiryDate { get; set; }
+    [DataMember(Order = 6)] public string Notes { get; set; }
+    [DataMember(Order = 7)] public int? RefId { get; set; }
+    [DataMember(Order = 8)] public string RefIdStr { get; set; }
+    [DataMember(Order = 9)] public Dictionary<string, string> Meta { get; set; }
+}
+[DataContract]
+public partial class UserApiKeyResponse : IHasResponseStatus
+{
+    [DataMember(Order = 1)] public string Result { get; set; }
+    [DataMember(Order = 2)] public ResponseStatus ResponseStatus { get; set; }
+}
+#if NET8_0_OR_GREATER
+[SystemJson(UseSystemJson.Response)]
+#endif
+[DataContract, ValidateIsAuthenticated, ExcludeMetadata]
+public partial class UpdateUserApiKey : IPatch, IReturn<EmptyResponse>
+{
+    [ValidateGreaterThan(0)]
+    [DataMember(Order = 1)] public int Id { get; set; }
+    [DataMember(Order = 2)] public string Name { get; set; }
+    [DataMember(Order = 5)] public List<string> Scopes { get; set; } = [];
+    [DataMember(Order = 6)] public List<string> Features { get; set; } = [];
+    [DataMember(Order = 7)] public List<string> RestrictTo { get; set; } = [];
+    [DataMember(Order = 8)] public DateTime? ExpiryDate { get; set; }
+    [DataMember(Order = 9)] public DateTime? CancelledDate { get; set; }
+    [DataMember(Order = 10)] public string Notes { get; set; }
+    [DataMember(Order = 11)] public int? RefId { get; set; }
+    [DataMember(Order = 12)] public string RefIdStr { get; set; }
+    [DataMember(Order = 13)] public Dictionary<string, string> Meta { get; set; }
+    [DataMember(Order = 14)] public List<string> Reset { get; set; }
+}
+[DataContract, ValidateIsAuthenticated, ExcludeMetadata]
+public partial class DeleteUserApiKey : IDelete, IReturn<EmptyResponse>
+{
+    [ValidateGreaterThan(0)]
+    [DataMember(Order = 1)] public int? Id { get; set; }
+}
+
+[DataContract, ExcludeMetadata, Tag(TagNames.Admin)]
+public partial class AdminQueryApiKeys : IGet, IReturn<AdminApiKeysResponse>
+{
+    [DataMember(Order = 1)] public int? Id { get; set; }
+    [DataMember(Order = 2)] public string Search { get; set; }
+    [DataMember(Order = 3)] public string UserId { get; set; }
+    [DataMember(Order = 4)] public string UserName { get; set; }
+    [DataMember(Order = 5)] public string OrderBy { get; set; }
+    [DataMember(Order = 6)] public int? Skip { get; set; }
+    [DataMember(Order = 7)] public int? Take { get; set; }
+}
+[DataContract]
+public partial class AdminApiKeysResponse : IHasResponseStatus
+{
+    [DataMember(Order = 1)] public List<PartialApiKey> Results { get; set; }
+    [DataMember(Order = 2)] public ResponseStatus ResponseStatus { get; set; }
+}
+
+[DataContract, ExcludeMetadata, Tag(TagNames.Admin)]
+public partial class AdminCreateApiKey : IPost, IReturn<AdminApiKeyResponse>
+{
+    [DataMember(Order = 1)] public string Name { get; set; }
+    [DataMember(Order = 2)] public string UserId { get; set; }
+    [DataMember(Order = 3)] public string UserName { get; set; }
+    [DataMember(Order = 4)] public List<string> Scopes { get; set; } = [];
+    [DataMember(Order = 5)] public List<string> Features { get; set; } = [];
+    [DataMember(Order = 6)] public List<string> RestrictTo { get; set; } = [];
+    [DataMember(Order = 7)] public DateTime? ExpiryDate { get; set; }
+    [DataMember(Order = 8)] public string Notes { get; set; }
+    [DataMember(Order = 9)] public int? RefId { get; set; }
+    [DataMember(Order = 10)] public string RefIdStr { get; set; }
+    [DataMember(Order = 11)] public Dictionary<string, string> Meta { get; set; }
+}
+[DataContract]
+public partial class AdminApiKeyResponse : IHasResponseStatus
+{
+    [DataMember(Order = 1)] public string Result { get; set; }
+    [DataMember(Order = 2)] public ResponseStatus ResponseStatus { get; set; }
+}
+
+#if NET8_0_OR_GREATER
+[SystemJson(UseSystemJson.Response)]
+#endif
+[DataContract, ExcludeMetadata, Tag(TagNames.Admin)]
+public partial class AdminUpdateApiKey : IPatch, IReturn<EmptyResponse>
+{
+    [ValidateGreaterThan(0)]
+    [DataMember(Order = 1)] public int Id { get; set; }
+    [DataMember(Order = 2)] public string Name { get; set; }
+    [DataMember(Order = 3)] public string UserId { get; set; }
+    [DataMember(Order = 4)] public string UserName { get; set; }
+    [DataMember(Order = 5)] public List<string> Scopes { get; set; } = [];
+    [DataMember(Order = 6)] public List<string> Features { get; set; } = [];
+    [DataMember(Order = 7)] public List<string> RestrictTo { get; set; } = [];
+    [DataMember(Order = 8)] public DateTime? ExpiryDate { get; set; }
+    [DataMember(Order = 9)] public DateTime? CancelledDate { get; set; }
+    [DataMember(Order = 10)] public string Notes { get; set; }
+    [DataMember(Order = 11)] public int? RefId { get; set; }
+    [DataMember(Order = 12)] public string RefIdStr { get; set; }
+    [DataMember(Order = 13)] public Dictionary<string, string> Meta { get; set; }
+    [DataMember(Order = 14)] public List<string> Reset { get; set; }
+}
+[DataContract, ExcludeMetadata, Tag(TagNames.Admin)]
+public partial class AdminDeleteApiKey : IDelete, IReturn<EmptyResponse>
+{
+    [ValidateGreaterThan(0)]
+    [DataMember(Order = 1)] public int? Id { get; set; }
+}
+[DataContract]
+public class PartialApiKey : IMeta
+{
+    [DataMember(Order = 1)] public int Id { get; set; }
+    [DataMember(Order = 2)] public string Name { get; set; }
+    [DataMember(Order = 3)] public string UserId { get; set; }
+    [DataMember(Order = 4)] public string UserName { get; set; }
+    [DataMember(Order = 5)] public string VisibleKey { get; set; }
+    [DataMember(Order = 6)] public string Environment { get; set; }
+    [DataMember(Order = 7)] public DateTime CreatedDate { get; set; }
+    [DataMember(Order = 8)] public DateTime? ExpiryDate { get; set; }
+    [DataMember(Order = 9)] public DateTime? CancelledDate { get; set; }
+    [DataMember(Order = 10)] public DateTime? LastUsedDate { get; set; }
+    [DataMember(Order = 11)] public List<string> Scopes { get; set; } = [];
+    [DataMember(Order = 12)] public List<string> Features { get; set; } = [];
+    [DataMember(Order = 13)] public List<string> RestrictTo { get; set; } = [];
+    [DataMember(Order = 14)] public string Notes { get; set; }
+    [DataMember(Order = 15)] public int? RefId { get; set; }
+    [DataMember(Order = 16)] public string RefIdStr { get; set; }
+    [DataMember(Order = 17)] public Dictionary<string, string> Meta { get; set; }
+    [DataMember(Order = 18)] public bool Active { get; set; }
 }
 
 /// <summary>

@@ -50,22 +50,12 @@ public static class HttpRequestExtensions
     /// - Items[name]
     /// </summary>
     /// <returns>string value or null if it doesn't exist</returns>
-    public static string GetParam(this IRequest httpReq, string name)
+    public static string GetParam(this IRequest req, string name)
     {
-        string value;
-        if ((value = httpReq.Headers[HttpHeaders.XParamOverridePrefix + name]) != null) return value;
-        if ((value = httpReq.QueryString[name]) != null) return value;
-        if ((value = httpReq.FormData[name]) != null) return value;
-
-        //IIS will assign null to params without a name: .../?some_value can be retrieved as req.Params[null]
-        //TryGetValue is not happy with null dictionary keys, so we should bail out here
-        if (string.IsNullOrEmpty(name)) return null;
-
-        if (httpReq.Cookies.TryGetValue(name, out var cookie)) return cookie.Value;
-
-        if (httpReq.Items.TryGetValue(name, out var oValue)) return oValue.ToString();
-
-        return null;
+        var appHost = HostContext.AppHost;
+        return appHost != null 
+            ? appHost.GetParam(req, name) 
+            : ViewUtils.GetParam(req, name);
     }
 
     public static string GetQueryStringOrForm(this IRequest httpReq, string name) =>
@@ -275,12 +265,13 @@ public static class HttpRequestExtensions
         }
 
         if (ex is HttpError httpEx) return httpEx.Status;
-        if (ex is NotImplementedException || ex is NotSupportedException) return (int)HttpStatusCode.MethodNotAllowed;
+        if (ex is NotImplementedException or NotSupportedException) return (int)HttpStatusCode.MethodNotAllowed;
         if (ex is FileNotFoundException) return (int)HttpStatusCode.NotFound;
-        if (ex is ArgumentException || ex is SerializationException || ex is FormatException) return (int)HttpStatusCode.BadRequest;
+        if (ex is ArgumentException or SerializationException or FormatException) return (int)HttpStatusCode.BadRequest;
         if (ex is AuthenticationException) return (int)HttpStatusCode.Unauthorized;
         if (ex is UnauthorizedAccessException) return (int)HttpStatusCode.Forbidden;
         if (ex is OptimisticConcurrencyException) return (int)HttpStatusCode.Conflict;
+        if (ex.GetType().Name.StartsWith("SecurityToken")) return (int)HttpStatusCode.Unauthorized;
         return (int)HttpStatusCode.InternalServerError;
     }
 
@@ -1032,51 +1023,32 @@ public static class HttpRequestExtensions
 
     public static string GetRequestValue(this IHttpRequest req, string name)
     {
-        switch (name)
+        return name switch
         {
-            case nameof(req.PathInfo):
-                return req.PathInfo;
-            case nameof(req.HttpMethod):
-            case nameof(req.Verb):
-                return req.HttpMethod;
-            case nameof(req.ContentType):
-                return req.ContentType;
-            case nameof(req.RawUrl):
-                return req.RawUrl;
-            case nameof(req.AbsoluteUri):
-                return req.AbsoluteUri;
-            case nameof(req.UserAgent):
-                return req.UserAgent;
-            case nameof(req.Accept):
-                return req.Accept;
-            case nameof(req.IsLocal):
-                return req.IsLocal.ToString();
-            case nameof(req.IsSecureConnection):
-                return req.IsSecureConnection.ToString();
-            case nameof(req.UserHostAddress):
-                return req.UserHostAddress;
-            case nameof(req.RemoteIp):
-                return req.RemoteIp;
-            case nameof(req.XRealIp):
-                return req.XRealIp;
-            case nameof(req.XForwardedFor):
-                return req.XForwardedFor;
-            case nameof(req.XForwardedPort):
-                return req.XForwardedPort.ToString();
-            case nameof(req.XForwardedProtocol):
-                return req.XForwardedProtocol;
-            case nameof(req.UrlReferrer):
-                return req.UrlReferrer.ToString();
-            case nameof(req.ContentLength):
-                return req.ContentLength.ToString();
-            default:
-                throw new NotSupportedException($"Unknown IHttpRequest property '{name}'");
-        }
+            nameof(req.PathInfo) => req.PathInfo,
+            nameof(req.HttpMethod) or nameof(req.Verb) => req.HttpMethod,
+            nameof(req.ContentType) => req.ContentType,
+            nameof(req.RawUrl) => req.RawUrl,
+            nameof(req.AbsoluteUri) => req.AbsoluteUri,
+            nameof(req.UserAgent) => req.UserAgent,
+            nameof(req.Accept) => req.Accept,
+            nameof(req.IsLocal) => req.IsLocal.ToString(),
+            nameof(req.IsSecureConnection) => req.IsSecureConnection.ToString(),
+            nameof(req.UserHostAddress) => req.UserHostAddress,
+            nameof(req.RemoteIp) => req.RemoteIp,
+            nameof(req.XRealIp) => req.XRealIp,
+            nameof(req.XForwardedFor) => req.XForwardedFor,
+            nameof(req.XForwardedPort) => req.XForwardedPort.ToString(),
+            nameof(req.XForwardedProtocol) => req.XForwardedProtocol,
+            nameof(req.UrlReferrer) => req.UrlReferrer.ToString(),
+            nameof(req.ContentLength) => req.ContentLength.ToString(),
+            _ => throw new NotSupportedException("Unknown IHttpRequest property")
+        };
     }
 
     public static void EachRequest<T>(this IRequest httpReq, Action<T> action)
     {
-        if (!(httpReq.Dto is IEnumerable<T> requests))
+        if (httpReq.Dto is not IEnumerable<T> requests)
             return;
 
         requests.Each((i, dto) =>
@@ -1099,13 +1071,10 @@ public static class HttpRequestExtensions
 
     public static ClaimsPrincipal GetClaimsPrincipal(this IRequest req)
     {
-#if NETCORE
-        return req.GetOriginalRequest<Microsoft.AspNetCore.Http.HttpRequest>()?.HttpContext.User;
-#else
-            return req.GetOriginalRequest<HttpRequestBase>()?.RequestContext.HttpContext.User is ClaimsPrincipal principal
-                ? principal
-                : null;
-#endif
+        return (req is IHasClaimsPrincipal hasClaimsPrincipal
+                   ? hasClaimsPrincipal.User
+                   : null)
+               ?? req.GetItem(Keywords.ClaimsPrincipal) as ClaimsPrincipal;
     }
 
     public static IEnumerable<Claim> GetClaims(this IRequest req) => 

@@ -70,7 +70,7 @@ public static class Env
             SupportsDynamic = true;
             IsNetCore21 = true;
 #endif
-#if NET8_0
+#if NET8_0_OR_GREATER
             IsNet8 = true;
 #elif NET6_0_OR_GREATER
             IsNet6 = true;
@@ -94,7 +94,10 @@ public static class Env
             }
             catch (Exception) {}
         }
-            
+#if NET6_0_OR_GREATER
+        if (OperatingSystem.IsIOS()) IsIOS = true;
+#endif
+        
         SupportsExpressions = true;
         SupportsEmit = !(IsUWP || IsIOS);
 
@@ -110,6 +113,14 @@ public static class Env
         UpdateServerUserAgent();
     }
 
+    internal static bool IsAot()
+    {
+#if NET6_0_OR_GREATER
+        return OperatingSystem.IsIOS() || !RuntimeFeature.IsDynamicCodeSupported;
+#endif
+        return false;
+    }
+
     internal static void UpdateServerUserAgent()
     {
         ServerUserAgent = "ServiceStack/"
@@ -123,7 +134,7 @@ public static class Env
 
     public static string VersionString { get; set; }
 
-    public static decimal ServiceStackVersion = 8.13m;
+    public static decimal ServiceStackVersion = 8.41m;
 
     public static bool IsLinux { get; set; }
 

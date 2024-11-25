@@ -7,11 +7,11 @@ permissions:
 
 jobs:
   pre-release-pack:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.100'
           
@@ -45,10 +45,11 @@ jobs:
       - name: Check number of packages
         if: env.number_of_packages < 73
         run: |
-          echo "Less packages produced than expected, failing."
+          echo "less packages produced (${{ env.number_of_packages }}) than expected (>=73), failing."
+          ls -1 ./build/staging/*.nupkg
           exit 1
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
           name: ServiceStack Packages
           retention-days: 1

@@ -166,6 +166,10 @@
     <MSBuild Projects="$(OrmLiteSrcDir)/ServiceStack.OrmLite.SqlServer.Data/ServiceStack.OrmLite.SqlServer.Data.Core.csproj"
              Targets="Build;Pack"
              Properties="Configuration=$(Configuration)" />
+    <!-- Now fails with '/obj/project.assets.json' not found -->
+    <!-- <MSBuild Projects="$(OrmLiteSrcDir)/ServiceStack.OrmLite.Oracle/ServiceStack.OrmLite.Oracle.Core.csproj"
+             Targets="Build;Pack"
+             Properties="Configuration=$(Configuration)" /> -->
 
     <!--
       ServiceStack.Redis

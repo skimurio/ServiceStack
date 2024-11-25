@@ -20,6 +20,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ServiceStack.Caching;
 using ServiceStack.Configuration;
+using ServiceStack.DataAnnotations;
 using ServiceStack.Host;
 using ServiceStack.Host.Handlers;
 using ServiceStack.Host.NetCore;
@@ -31,6 +32,7 @@ using ServiceStack.Platforms;
 using ServiceStack.Redis;
 using ServiceStack.Text;
 using ServiceStack.Web;
+using ActionContext = ServiceStack.Host.ActionContext;
 #if NETSTANDARD2_0
 using IHostApplicationLifetime = Microsoft.AspNetCore.Hosting.IApplicationLifetime;
 using IWebHostEnvironment = Microsoft.AspNetCore.Hosting.IHostingEnvironment;
@@ -245,7 +247,8 @@ public abstract class AppHostBase : ServiceStackHost, IAppHostNetCore, IConfigur
         return useExistingNonWildcardEndpoint;
     }
     
-    public virtual RouteHandlerBuilder ConfigureOperationEndpoint(RouteHandlerBuilder builder, Operation operation)
+    public virtual RouteHandlerBuilder ConfigureOperationEndpoint(RouteHandlerBuilder builder, 
+        Operation operation, EndpointOptions options=default)
     {
         if (operation.ResponseType != null)
         {
@@ -262,7 +265,7 @@ public abstract class AppHostBase : ServiceStackHost, IAppHostNetCore, IConfigur
         {
             builder.Produces(Config.Return204NoContentForEmptyResponse ? 204 : 200, responseType:null);
         }
-        if (operation.RequiresAuthentication)
+        if (options.RequireAuth && operation.RequiresAuthentication)
         {
             var authAttr = operation.Authorize ?? new Microsoft.AspNetCore.Authorization.AuthorizeAttribute();
             authAttr.AuthenticationSchemes ??= Options.AuthenticationSchemes;
@@ -274,9 +277,10 @@ public abstract class AppHostBase : ServiceStackHost, IAppHostNetCore, IConfigur
         }
             
         if (operation.RequestType.ExcludesFeature(Feature.Metadata) || 
-            operation.RequestType.ExcludesFeature(Feature.ApiExplorer))
+            operation.RequestType.ExcludesFeature(Feature.ApiExplorer) || 
+            operation.RequestType.HasAttribute<ExcludeFromDescriptionAttribute>())
             builder.ExcludeFromDescription();
-
+        
         return builder;
     }
     
@@ -294,7 +298,7 @@ public abstract class AppHostBase : ServiceStackHost, IAppHostNetCore, IConfigur
     {
         Task HandleRequestAsync(Type requestType, HttpContext httpContext)
         {
-            var req = httpContext.ToRequest();
+            var req = httpContext.ToRequest().AddTimingsIfNeeded(this);
             var restPath = RestHandler.FindMatchingRestPath(req, out var contentType);
             var handler = restPath != null
                 ? (HttpAsyncTaskHandler)new RestHandler {
@@ -303,11 +307,13 @@ public abstract class AppHostBase : ServiceStackHost, IAppHostNetCore, IConfigur
                     ResponseContentType = contentType
                 }
                 : new NotFoundHttpHandler();
+            
             return handler.ProcessRequestAsync(req, req.Response, requestType.Name);
         }
 
         var existingRoutes = new Dictionary<string, RestPath>();
-        
+        var options = CreateEndpointOptions();
+
         foreach (var entry in Metadata.OperationsMap)
         {
             var requestType = entry.Key;
@@ -335,7 +341,7 @@ public abstract class AppHostBase : ServiceStackHost, IAppHostNetCore, IConfigur
                         var pathBuilder = routeBuilder.MapMethods(route.Path, verb, (HttpResponse response, HttpContext httpContext) =>
                             HandleRequestAsync(requestType, httpContext));
                         
-                        ConfigureOperationEndpoint(pathBuilder, operation);
+                        ConfigureOperationEndpoint(pathBuilder, operation, options);
 
                         foreach (var handler in Options.RouteHandlerBuilders)
                         {
@@ -362,7 +368,7 @@ public abstract class AppHostBase : ServiceStackHost, IAppHostNetCore, IConfigur
                                 (string format, HttpResponse response, HttpContext httpContext) =>
                                     HandleRequestAsync(requestType, httpContext));
                         
-                            ConfigureOperationEndpoint(pathBuilder, operation)
+                            ConfigureOperationEndpoint(pathBuilder, operation, options)
                                 .WithMetadata<string>(routePath);
                         }
                     }
@@ -374,6 +380,14 @@ public abstract class AppHostBase : ServiceStackHost, IAppHostNetCore, IConfigur
                 }
             }
         }
+    }
+
+    public EndpointOptions CreateEndpointOptions()
+    {
+        var requireAuth = ApplicationServices.GetService<Microsoft.AspNetCore.Authentication.IAuthenticationSchemeProvider>() != null
+            || HasPlugin<AuthFeature>();
+        var options = new EndpointOptions(RequireAuth: requireAuth);
+        return options;
     }
 #endif
 
@@ -577,7 +591,8 @@ public interface IAppHostNetCore : IAppHost, IRequireConfiguration
 #if NET8_0_OR_GREATER
     ServiceStackOptions Options { get; }
     Dictionary<string, string[]> EndpointVerbs { get; }
-    RouteHandlerBuilder ConfigureOperationEndpoint(RouteHandlerBuilder builder, Operation operation);
+    EndpointOptions CreateEndpointOptions();
+    RouteHandlerBuilder ConfigureOperationEndpoint(RouteHandlerBuilder builder, Operation operation, EndpointOptions options=default);
 #endif
 }
 
@@ -639,6 +654,11 @@ public static class NetCoreAppHostExtensions
         ServiceStackHost.GlobalAfterConfigureServices.ForEach(fn => fn(services));
         ServiceStackHost.GlobalAfterConfigureServices.Clear();
 
+        if (options.AutoRegister.Contains(typeof(HttpUtils)))
+        {
+            services.AddHttpClient(nameof(HttpUtils))
+                .ConfigurePrimaryHttpMessageHandler(() => HttpUtils.HttpClientHandlerFactory());
+        }
         if (options.ShouldAutoRegister<IAppSettings>() && !services.Exists<IAppSettings>())
         {
             services.AddSingleton<IAppSettings, NetCoreAppSettings>();
@@ -671,6 +691,15 @@ public static class NetCoreAppHostExtensions
         {
             services.AddSingleton<IMessageFactory>(c => c.GetRequiredService<IMessageService>().MessageFactory);
         }
+        //required when services.AddMvc().AddControllersAsServices(); https://github.com/ServiceStack/Discuss/discussions/126
+        if (options.ShouldAutoRegister<ServiceController>())
+        {
+            services.AddSingleton<ServiceController>(c => HostContext.ServiceController);
+        }
+        if (options.ShouldAutoRegister<Auth.IPasswordHasher>() && !services.Exists<Auth.IPasswordHasher>())
+        {
+            services.AddSingleton<Auth.IPasswordHasher, Auth.PasswordHasher>();
+        }
     }
 #endif
 
@@ -693,6 +722,18 @@ public static class NetCoreAppHostExtensions
 
     public static bool IsProductionEnvironment(this IAppHost appHost) =>
         appHost.GetHostingEnvironment().EnvironmentName == "Production";
+
+#if NET8_0_OR_GREATER
+    public static void AddRequestDtoAttributes(RouteHandlerBuilder builder, Operation operation, string verb, string route)
+    {
+        var attrs = operation.RequestType.GetCustomAttributes(true);
+        builder.WithMetadata(new CommandAttribute(operation.RequestType));
+        foreach (var attr in attrs)
+        {
+            builder.WithMetadata(attr);
+        }
+    }
+#endif
 
     public static IApplicationBuilder UseServiceStack(this IApplicationBuilder app, AppHostBase appHost
 #if NET8_0_OR_GREATER
@@ -717,6 +758,8 @@ public static class NetCoreAppHostExtensions
             }
         }
         appHost.Options.AuthenticationSchemes ??= Microsoft.AspNetCore.Identity.IdentityConstants.ApplicationScheme;
+        
+        appHost.Options.RouteHandlerBuilders.Add(AddRequestDtoAttributes);
         
         configure?.Invoke(appHost.Options);
 
@@ -748,9 +791,9 @@ public static class NetCoreAppHostExtensions
     }
     
 #if NET8_0_OR_GREATER
-    public static void MapEndpoints(this IAppHostNetCore appHost, Action<Microsoft.AspNetCore.Routing.IEndpointRouteBuilder> configure)
+    public static void MapEndpoints(this IAppHostNetCore? appHost, Action<Microsoft.AspNetCore.Routing.IEndpointRouteBuilder> configure)
     {
-        if (!appHost.Options.MapEndpointRouting)
+        if (appHost == null || !appHost.Options.MapEndpointRouting)
             return;
         
         configure((Microsoft.AspNetCore.Routing.IEndpointRouteBuilder)appHost.App);
@@ -760,7 +803,7 @@ public static class NetCoreAppHostExtensions
     {
         if (handlerFactory == null)
             return Task.CompletedTask;
-        var req = httpContext.ToRequest();
+        var req = httpContext.ToRequest().AddTimingsIfNeeded();
         var handler = handlerFactory(req);
         if (handler == null)
             return Task.CompletedTask;
@@ -774,7 +817,7 @@ public static class NetCoreAppHostExtensions
     {
         if (handler == null)
             return Task.CompletedTask;
-        var req = httpContext.ToRequest();
+        var req = httpContext.ToRequest().AddTimingsIfNeeded();
         var res = (NetCoreResponse)req.Response;
         //res.KeepOpen = true; // Let ASP.NET Core close request
         configure?.Invoke(req);
@@ -880,6 +923,18 @@ public static class NetCoreAppHostExtensions
     public static IServiceProvider GetServiceProvider(this IRequest? request) => 
         request as IServiceProvider ?? ServiceStackHost.Instance.GetApplicationServices()
         ?? throw new NotSupportedException("No IServiceProvider found");
+    
+    public static string? GetRemoteIp(this HttpContext? ctx)
+    {
+        var headers = ctx?.Request.Headers;
+        if (headers == null)
+            return null;
+        return !string.IsNullOrEmpty(headers[HttpHeaders.XForwardedFor])
+            ? headers[HttpHeaders.XForwardedFor].ToString()
+            : !string.IsNullOrEmpty(headers[HttpHeaders.XRealIp])
+                ? headers[HttpHeaders.XForwardedFor].ToString()
+                : ctx?.Connection.RemoteIpAddress?.ToString();
+    }
 
 #if NET6_0_OR_GREATER
     public static T ConfigureAndResolve<T>(this IHostingStartup config, string? hostDir = null, bool setHostDir = true)

@@ -141,6 +141,8 @@ public class IdentityAdminUsersFeature<TUser, TKey> : IIdentityAdminUsersFeature
         var typedUser = (TUser)user;
         var userManager = request.GetServiceProvider().GetRequiredService<UserManager<TUser>>();
         var result = await userManager.CreateAsync(typedUser, password).ConfigAwait();
+        if (result.Succeeded == false)
+            return result;
         if (roles is { Count: > 0 })
             await userManager.AddToRolesAsync(typedUser, roles).ConfigAwait();
         
@@ -293,7 +295,7 @@ public class IdentityAdminUsersFeature<TUser, TKey> : IIdentityAdminUsersFeature
     public Task BeforeDeleteUserAsync(IRequest request, string userId) =>
         OnBeforeDeleteUser?.Invoke(request, userId) ?? Task.CompletedTask;
     public Task AfterDeleteUserAsync(IRequest request, string userId) =>
-        OnBeforeDeleteUser?.Invoke(request, userId) ?? Task.CompletedTask;
+        OnAfterDeleteUser?.Invoke(request, userId) ?? Task.CompletedTask;
 
     public IdentityAdminUsersFeature<TUser, TKey> RemoveFromUserForm(params string[] fieldNames) =>
         RemoveFromUserForm(input => fieldNames.Contains(input.Name));
@@ -334,7 +336,7 @@ public class IdentityAdminUsersFeature<TUser, TKey> : IIdentityAdminUsersFeature
     public void Configure(IServiceCollection services)
     {
         services.AddSingleton<IIdentityAdminUsersFeature>(this);
-        services.RegisterService(typeof(AdminIdentityUsersService));
+        services.RegisterService<AdminIdentityUsersService>();
     }
 
     public void Register(IAppHost appHost)

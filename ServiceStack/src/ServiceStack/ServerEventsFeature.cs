@@ -33,6 +33,7 @@ public class ServerEventsFeature : IPlugin, IConfigureServices, Model.IHasString
     public string StreamPath { get; set; }
     public string HeartbeatPath { get; set; }
     public string SubscribersPath { get; set; }
+    public string UpdateSubscribersPath { get; set; }
     public string UnRegisterPath { get; set; }
 
     public TimeSpan IdleTimeout { get; set; }
@@ -96,6 +97,7 @@ public class ServerEventsFeature : IPlugin, IConfigureServices, Model.IHasString
         HeartbeatPath = "/event-heartbeat";
         UnRegisterPath = "/event-unregister";
         SubscribersPath = "/event-subscribers";
+        UpdateSubscribersPath = "/event-subscribers/{Id}";
 
         WriteEvent = (res, frame) =>
         {
@@ -176,6 +178,9 @@ public class ServerEventsFeature : IPlugin, IConfigureServices, Model.IHasString
 
         if (SubscribersPath != null)
             services.RegisterService<ServerEventsSubscribersService>(SubscribersPath);
+        
+        if (UpdateSubscribersPath != null)
+            services.RegisterService<UpdateEventSubscriberService>(UpdateSubscribersPath);
     }
 
     public void Register(IAppHost appHost)
@@ -190,12 +195,11 @@ public class ServerEventsFeature : IPlugin, IConfigureServices, Model.IHasString
         appHost.OnDisposeCallbacks.Add(host => appHost.Resolve<IServerEvents>().Stop());
         
 #if NET8_0_OR_GREATER
-        var host = (IAppHostNetCore)appHost;
-        host.MapEndpoints(routeBuilder =>
+        (appHost as IAppHostNetCore).MapEndpoints(routeBuilder =>
         {
             routeBuilder.MapGet(StreamPath, httpContext => httpContext.ProcessRequestAsync(new ServerEventsHandler()))
                 .WithMetadata<string>(nameof(StreamPath), tag:GetType().Name);
-            routeBuilder.MapGet(HeartbeatPath, httpContext => httpContext.ProcessRequestAsync(new ServerEventsHeartbeatHandler()))
+            routeBuilder.MapPost(HeartbeatPath, httpContext => httpContext.ProcessRequestAsync(new ServerEventsHeartbeatHandler()))
                 .WithMetadata<string>(nameof(HeartbeatPath), tag:GetType().Name);
         });
 #endif
@@ -512,7 +516,12 @@ public class ServerEventsUnRegisterService(IServerEvents serverEvents) : Service
 
         return subscription.Meta;
     }
+}
 
+[DefaultRequest(typeof(UpdateEventSubscriber))]
+[Restrict(VisibilityTo = RequestAttributes.None)]
+public class UpdateEventSubscriberService(IServerEvents serverEvents) : Service
+{
     public const string UpdateEventSubNotExists = nameof(UpdateEventSubNotExists);
     private const string UpdateEventInvalidAccess = nameof(UpdateEventInvalidAccess);
 
@@ -572,18 +581,16 @@ trigger.customEvent arg
 public class EventSubscription : SubscriptionInfo, IEventSubscription, IServiceStackAsyncDisposable
 {
     private static ILog Log = LogManager.GetLogger(typeof(EventSubscription));
-    public static string[] UnknownChannel = { "*" };
+    public static string[] UnknownChannel = ["*"];
 
     private long LastPulseAtTicks = DateTime.UtcNow.Ticks;
     public DateTime LastPulseAt
     {
-        get
-        {
+        get =>
             // assume gRPC connection is always active unless response is closed
-            return !response.IsClosed && (response is IWriteEvent || response is IWriteEventAsync)
+            !response.IsClosed && (response is IWriteEvent || response is IWriteEventAsync)
                 ? DateTime.UtcNow 
                 : new DateTime(Interlocked.Read(ref LastPulseAtTicks), DateTimeKind.Utc);
-        }
         set => Interlocked.Exchange(ref LastPulseAtTicks, value.Ticks);
     }
 

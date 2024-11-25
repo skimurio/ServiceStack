@@ -182,6 +182,10 @@ export const EditUser = {
                 </div>
               </fieldset>
             </div>
+            <div class="mt-8 pt-4 border-t border-gray-900/10 px-4 sm:px-6">
+              <ManageUserApiKeys v-if="store.plugins?.apiKey" :user="request" />
+            </div>
+            
           </div>
         </form>
         <template #footer>
@@ -242,7 +246,7 @@ export const EditUser = {
             })
         }
         async function deleteUser() {
-            await send(new AdminDeleteUser({ id:props.id }), done)
+            await send(new AdminDeleteUser({ id:props.id }), save)
         }
         async function lockUser() {
             await send(new AdminUpdateUser({ id:props.id, lockUser:true }), response => bind(response))
@@ -294,12 +298,13 @@ export const EditUser = {
         })
         const showForm = ref(true)
         function updateRequest(value) {
-            console.log('updateRequest', value)
+            console.debug('updateRequest', value)
         }
         function close() {
             emit('done')
         }
         return {
+            store,
             routes,
             request,
             exceptFields,

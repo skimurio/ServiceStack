@@ -1,8 +1,8 @@
 import { ApiResult } from './client';
 
 /* Options:
-Date: 2023-10-27 18:15:00
-Version: 6.111
+Date: 2024-10-17 23:05:22
+Version: 8.41
 Tip: To override a DTO option, remove "//" prefix before updating
 BaseUrl: http://localhost:20000
 
@@ -30,12 +30,12 @@ export interface IReturnVoid
 
 export interface IHasSessionId
 {
-    sessionId: string;
+    sessionId?: string;
 }
 
 export interface IHasBearerToken
 {
-    bearerToken: string;
+    bearerToken?: string;
 }
 
 export interface IGet
@@ -54,32 +54,8 @@ export interface IDelete
 {
 }
 
-export class ValidateRule
+export interface IPatch
 {
-    public validator: string;
-    public condition: string;
-    public errorCode: string;
-    public message: string;
-
-    public constructor(init?: Partial<ValidateRule>) { (Object as any).assign(this, init); }
-}
-
-export class ValidationRule extends ValidateRule
-{
-    public id: number;
-    // @Required()
-    public type: string;
-
-    public field: string;
-    public createdBy: string;
-    public createdDate?: string;
-    public modifiedBy: string;
-    public modifiedDate?: string;
-    public suspendedBy: string;
-    public suspendedDate?: string;
-    public notes: string;
-
-    public constructor(init?: Partial<ValidationRule>) { super(init); (Object as any).assign(this, init); }
 }
 
 // @DataContract
@@ -107,9 +83,12 @@ export class AdminUserBase
     public profileUrl: string;
 
     // @DataMember(Order=8)
-    public userAuthProperties: { [index: string]: string; };
+    public phoneNumber: string;
 
     // @DataMember(Order=9)
+    public userAuthProperties: { [index: string]: string; };
+
+    // @DataMember(Order=10)
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<AdminUserBase>) { (Object as any).assign(this, init); }
@@ -149,55 +128,78 @@ export class QueryDb<T> extends QueryBase
 }
 
 // @DataContract
-export class CrudEvent
+export class ResponseError
 {
     // @DataMember(Order=1)
-    public id: number;
+    public errorCode: string;
 
     // @DataMember(Order=2)
-    public eventType: string;
+    public fieldName: string;
 
     // @DataMember(Order=3)
-    public model: string;
+    public message: string;
 
     // @DataMember(Order=4)
-    public modelId: string;
-
-    // @DataMember(Order=5)
-    public eventDate: string;
-
-    // @DataMember(Order=6)
-    public rowsUpdated?: number;
-
-    // @DataMember(Order=7)
-    public requestType: string;
-
-    // @DataMember(Order=8)
-    // @StringLength(2147483647)
-    public requestBody: string;
-
-    // @DataMember(Order=9)
-    public userAuthId: string;
-
-    // @DataMember(Order=10)
-    public userAuthName: string;
-
-    // @DataMember(Order=11)
-    public remoteIp: string;
-
-    // @DataMember(Order=12)
-    public urn: string;
-
-    // @DataMember(Order=13)
-    public refId?: number;
-
-    // @DataMember(Order=14)
-    public refIdStr: string;
-
-    // @DataMember(Order=15)
     public meta: { [index: string]: string; };
 
-    public constructor(init?: Partial<CrudEvent>) { (Object as any).assign(this, init); }
+    public constructor(init?: Partial<ResponseError>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class ResponseStatus
+{
+    // @DataMember(Order=1)
+    public errorCode: string;
+
+    // @DataMember(Order=2)
+    public message: string;
+
+    // @DataMember(Order=3)
+    public stackTrace: string;
+
+    // @DataMember(Order=4)
+    public errors: ResponseError[];
+
+    // @DataMember(Order=5)
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<ResponseStatus>) { (Object as any).assign(this, init); }
+}
+
+export class RequestLog
+{
+    public id: number;
+    public traceId: string;
+    public operationName: string;
+    public dateTime: string;
+    public statusCode: number;
+    public statusDescription?: string;
+    public httpMethod?: string;
+    public absoluteUri?: string;
+    public pathInfo?: string;
+    public request?: string;
+    // @StringLength(2147483647)
+    public requestBody?: string;
+
+    public userAuthId?: string;
+    public sessionId?: string;
+    public ipAddress?: string;
+    public forwardedFor?: string;
+    public referer?: string;
+    public headers: { [index: string]: string; };
+    public formData?: { [index: string]: string; };
+    public items: { [index: string]: string; };
+    public responseHeaders?: { [index: string]: string; };
+    public response?: string;
+    public responseBody?: string;
+    public sessionBody?: string;
+    public error?: ResponseStatus;
+    public exceptionSource?: string;
+    public exceptionDataBody?: string;
+    public requestDuration: string;
+    public meta?: { [index: string]: string; };
+
+    public constructor(init?: Partial<RequestLog>) { (Object as any).assign(this, init); }
 }
 
 export class RedisEndpointInfo
@@ -210,6 +212,171 @@ export class RedisEndpointInfo
     public password: string;
 
     public constructor(init?: Partial<RedisEndpointInfo>) { (Object as any).assign(this, init); }
+}
+
+export enum BackgroundJobState
+{
+    Queued = 'Queued',
+    Started = 'Started',
+    Executed = 'Executed',
+    Completed = 'Completed',
+    Failed = 'Failed',
+    Cancelled = 'Cancelled',
+}
+
+export class BackgroundJobBase
+{
+    public id: number;
+    public parentId?: number;
+    public refId?: string;
+    public worker?: string;
+    public tag?: string;
+    public batchId?: string;
+    public callback?: string;
+    public dependsOn?: number;
+    public runAfter?: string;
+    public createdDate: string;
+    public createdBy?: string;
+    public requestId?: string;
+    public requestType: string;
+    public command?: string;
+    public request: string;
+    public requestBody: string;
+    public userId?: string;
+    public response?: string;
+    public responseBody?: string;
+    public state: BackgroundJobState;
+    public startedDate?: string;
+    public completedDate?: string;
+    public notifiedDate?: string;
+    public retryLimit?: number;
+    public attempts: number;
+    public durationMs: number;
+    public timeoutSecs?: number;
+    public progress?: number;
+    public status?: string;
+    public logs?: string;
+    public lastActivityDate?: string;
+    public replyTo?: string;
+    public errorCode?: string;
+    public error?: ResponseStatus;
+    public args?: { [index: string]: string; };
+    public meta?: { [index: string]: string; };
+
+    public constructor(init?: Partial<BackgroundJobBase>) { (Object as any).assign(this, init); }
+}
+
+export class BackgroundJob extends BackgroundJobBase
+{
+    public id: number;
+
+    public constructor(init?: Partial<BackgroundJob>) { super(init); (Object as any).assign(this, init); }
+}
+
+export class JobSummary
+{
+    public id: number;
+    public parentId?: number;
+    public refId?: string;
+    public worker?: string;
+    public tag?: string;
+    public batchId?: string;
+    public createdDate: string;
+    public createdBy?: string;
+    public requestType: string;
+    public command?: string;
+    public request: string;
+    public response?: string;
+    public userId?: string;
+    public callback?: string;
+    public startedDate?: string;
+    public completedDate?: string;
+    public state: BackgroundJobState;
+    public durationMs: number;
+    public attempts: number;
+    public errorCode?: string;
+    public errorMessage?: string;
+
+    public constructor(init?: Partial<JobSummary>) { (Object as any).assign(this, init); }
+}
+
+export class BackgroundJobOptions
+{
+    public refId?: string;
+    public parentId?: number;
+    public worker?: string;
+    public runAfter?: string;
+    public callback?: string;
+    public dependsOn?: number;
+    public userId?: string;
+    public retryLimit?: number;
+    public replyTo?: string;
+    public tag?: string;
+    public batchId?: string;
+    public createdBy?: string;
+    public timeoutSecs?: number;
+    public timeout?: string;
+    public args?: { [index: string]: string; };
+    public runCommand?: boolean;
+
+    public constructor(init?: Partial<BackgroundJobOptions>) { (Object as any).assign(this, init); }
+}
+
+export class ScheduledTask
+{
+    public id: number;
+    public name: string;
+    public interval?: string;
+    public cronExpression?: string;
+    public requestType: string;
+    public command?: string;
+    public request: string;
+    public requestBody: string;
+    public options?: BackgroundJobOptions;
+    public lastRun?: string;
+    public lastJobId?: number;
+
+    public constructor(init?: Partial<ScheduledTask>) { (Object as any).assign(this, init); }
+}
+
+export class CompletedJob extends BackgroundJobBase
+{
+
+    public constructor(init?: Partial<CompletedJob>) { super(init); (Object as any).assign(this, init); }
+}
+
+export class FailedJob extends BackgroundJobBase
+{
+
+    public constructor(init?: Partial<FailedJob>) { super(init); (Object as any).assign(this, init); }
+}
+
+export class ValidateRule
+{
+    public validator: string;
+    public condition: string;
+    public errorCode: string;
+    public message: string;
+
+    public constructor(init?: Partial<ValidateRule>) { (Object as any).assign(this, init); }
+}
+
+export class ValidationRule extends ValidateRule
+{
+    public id: number;
+    // @Required()
+    public type: string;
+
+    public field: string;
+    public createdBy: string;
+    public createdDate?: string;
+    public modifiedBy: string;
+    public modifiedDate?: string;
+    public suspendedBy: string;
+    public suspendedDate?: string;
+    public notes: string;
+
+    public constructor(init?: Partial<ValidationRule>) { super(init); (Object as any).assign(this, init); }
 }
 
 export class AppInfo
@@ -228,6 +395,8 @@ export class AppInfo
     public backgroundImageUrl: string;
     public iconUrl: string;
     public jsTextCase: string;
+    public useSystemJson: string;
+    public endpointRouting?: string[];
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<AppInfo>) { (Object as any).assign(this, init); }
@@ -424,6 +593,14 @@ export class MetaAuthProvider
     public constructor(init?: Partial<MetaAuthProvider>) { (Object as any).assign(this, init); }
 }
 
+export class IdentityAuthInfo
+{
+    public hasRefreshToken?: boolean;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<IdentityAuthInfo>) { (Object as any).assign(this, init); }
+}
+
 export class AuthInfo
 {
     public hasAuthSecret?: boolean;
@@ -432,6 +609,7 @@ export class AuthInfo
     public includesOAuthTokens?: boolean;
     public htmlRedirect: string;
     public authProviders: MetaAuthProvider[];
+    public identityAuth: IdentityAuthInfo;
     public roleLinks: { [index: string]: LinkInfo[]; };
     public serviceRoutes: { [index: string]: string[]; };
     public meta: { [index: string]: string; };
@@ -439,113 +617,18 @@ export class AuthInfo
     public constructor(init?: Partial<AuthInfo>) { (Object as any).assign(this, init); }
 }
 
-export class AutoQueryConvention
+export class ApiKeyInfo
 {
-    public name: string;
-    public value: string;
-    public types: string;
-    public valueType: string;
-
-    public constructor(init?: Partial<AutoQueryConvention>) { (Object as any).assign(this, init); }
-}
-
-export class AutoQueryInfo
-{
-    public maxLimit?: number;
-    public untypedQueries?: boolean;
-    public rawSqlFilters?: boolean;
-    public autoQueryViewer?: boolean;
-    public async?: boolean;
-    public orderByPrimaryKey?: boolean;
-    public crudEvents?: boolean;
-    public crudEventsServices?: boolean;
-    public accessRole: string;
-    public namedConnection: string;
-    public viewerConventions: AutoQueryConvention[];
+    public label: string;
+    public httpHeader: string;
+    public scopes: string[];
+    public features: string[];
+    public requestTypes: string[];
+    public expiresIn: KeyValuePair<string,string>[];
+    public hide: string[];
     public meta: { [index: string]: string; };
 
-    public constructor(init?: Partial<AutoQueryInfo>) { (Object as any).assign(this, init); }
-}
-
-export class ScriptMethodType
-{
-    public name: string;
-    public paramNames: string[];
-    public paramTypes: string[];
-    public returnType: string;
-
-    public constructor(init?: Partial<ScriptMethodType>) { (Object as any).assign(this, init); }
-}
-
-export class ValidationInfo
-{
-    public hasValidationSource?: boolean;
-    public hasValidationSourceAdmin?: boolean;
-    public serviceRoutes: { [index: string]: string[]; };
-    public typeValidators: ScriptMethodType[];
-    public propertyValidators: ScriptMethodType[];
-    public accessRole: string;
-    public meta: { [index: string]: string; };
-
-    public constructor(init?: Partial<ValidationInfo>) { (Object as any).assign(this, init); }
-}
-
-export class SharpPagesInfo
-{
-    public apiPath: string;
-    public scriptAdminRole: string;
-    public metadataDebugAdminRole: string;
-    public metadataDebug?: boolean;
-    public spaFallback?: boolean;
-    public meta: { [index: string]: string; };
-
-    public constructor(init?: Partial<SharpPagesInfo>) { (Object as any).assign(this, init); }
-}
-
-export class RequestLogsInfo
-{
-    public accessRole: string;
-    public requiredRoles: string[];
-    public requestLogger: string;
-    public defaultLimit: number;
-    public serviceRoutes: { [index: string]: string[]; };
-    public meta: { [index: string]: string; };
-
-    public constructor(init?: Partial<RequestLogsInfo>) { (Object as any).assign(this, init); }
-}
-
-export class ProfilingInfo
-{
-    public accessRole: string;
-    public defaultLimit: number;
-    public summaryFields: string[];
-    public tagLabel?: string;
-    public meta: { [index: string]: string; };
-
-    public constructor(init?: Partial<ProfilingInfo>) { (Object as any).assign(this, init); }
-}
-
-export class FilesUploadLocation
-{
-    public name: string;
-    public readAccessRole: string;
-    public writeAccessRole: string;
-    public allowExtensions: string[];
-    public allowOperations: string;
-    public maxFileCount?: number;
-    public minFileBytes?: number;
-    public maxFileBytes?: number;
-
-    public constructor(init?: Partial<FilesUploadLocation>) { (Object as any).assign(this, init); }
-}
-
-export class FilesUploadInfo
-{
-    public basePath: string;
-    public locations: FilesUploadLocation[];
-    public meta: { [index: string]: string; };
-
-    public constructor(init?: Partial<FilesUploadInfo>) { (Object as any).assign(this, init); }
+    public constructor(init?: Partial<ApiKeyInfo>) { (Object as any).assign(this, init); }
 }
 
 export class MetadataTypeName
@@ -653,6 +736,132 @@ export class MetadataType
     public constructor(init?: Partial<MetadataType>) { (Object as any).assign(this, init); }
 }
 
+export class CommandInfo
+{
+    public name: string;
+    public tag: string;
+    public request: MetadataType;
+    public response: MetadataType;
+
+    public constructor(init?: Partial<CommandInfo>) { (Object as any).assign(this, init); }
+}
+
+export class CommandsInfo
+{
+    public commands: CommandInfo[];
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<CommandsInfo>) { (Object as any).assign(this, init); }
+}
+
+export class AutoQueryConvention
+{
+    public name: string;
+    public value: string;
+    public types: string;
+    public valueType: string;
+
+    public constructor(init?: Partial<AutoQueryConvention>) { (Object as any).assign(this, init); }
+}
+
+export class AutoQueryInfo
+{
+    public maxLimit?: number;
+    public untypedQueries?: boolean;
+    public rawSqlFilters?: boolean;
+    public autoQueryViewer?: boolean;
+    public async?: boolean;
+    public orderByPrimaryKey?: boolean;
+    public crudEvents?: boolean;
+    public crudEventsServices?: boolean;
+    public accessRole: string;
+    public namedConnection: string;
+    public viewerConventions: AutoQueryConvention[];
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<AutoQueryInfo>) { (Object as any).assign(this, init); }
+}
+
+export class ScriptMethodType
+{
+    public name: string;
+    public paramNames: string[];
+    public paramTypes: string[];
+    public returnType: string;
+
+    public constructor(init?: Partial<ScriptMethodType>) { (Object as any).assign(this, init); }
+}
+
+export class ValidationInfo
+{
+    public hasValidationSource?: boolean;
+    public hasValidationSourceAdmin?: boolean;
+    public serviceRoutes: { [index: string]: string[]; };
+    public typeValidators: ScriptMethodType[];
+    public propertyValidators: ScriptMethodType[];
+    public accessRole: string;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<ValidationInfo>) { (Object as any).assign(this, init); }
+}
+
+export class SharpPagesInfo
+{
+    public apiPath: string;
+    public scriptAdminRole: string;
+    public metadataDebugAdminRole: string;
+    public metadataDebug?: boolean;
+    public spaFallback?: boolean;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<SharpPagesInfo>) { (Object as any).assign(this, init); }
+}
+
+export class RequestLogsInfo
+{
+    public accessRole: string;
+    public requestLogger: string;
+    public defaultLimit: number;
+    public serviceRoutes: { [index: string]: string[]; };
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<RequestLogsInfo>) { (Object as any).assign(this, init); }
+}
+
+export class ProfilingInfo
+{
+    public accessRole: string;
+    public defaultLimit: number;
+    public summaryFields: string[];
+    public tagLabel?: string;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<ProfilingInfo>) { (Object as any).assign(this, init); }
+}
+
+export class FilesUploadLocation
+{
+    public name: string;
+    public readAccessRole: string;
+    public writeAccessRole: string;
+    public allowExtensions: string[];
+    public allowOperations: string;
+    public maxFileCount?: number;
+    public minFileBytes?: number;
+    public maxFileBytes?: number;
+
+    public constructor(init?: Partial<FilesUploadLocation>) { (Object as any).assign(this, init); }
+}
+
+export class FilesUploadInfo
+{
+    public basePath: string;
+    public locations: FilesUploadLocation[];
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<FilesUploadInfo>) { (Object as any).assign(this, init); }
+}
+
 export class MediaRule
 {
     public size: string;
@@ -677,6 +886,22 @@ export class AdminUsersInfo
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<AdminUsersInfo>) { (Object as any).assign(this, init); }
+}
+
+export class AdminIdentityUsersInfo
+{
+    public accessRole: string;
+    public enabled: string[];
+    public identityUser: MetadataType;
+    public allRoles: string[];
+    public allPermissions: string[];
+    public queryIdentityUserProperties: string[];
+    public queryMediaRules: MediaRule[];
+    public formLayout: InputInfo[];
+    public css: ApiCss;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<AdminIdentityUsersInfo>) { (Object as any).assign(this, init); }
 }
 
 export class AdminRedisInfo
@@ -721,6 +946,8 @@ export class PluginInfo
 {
     public loaded: string[];
     public auth: AuthInfo;
+    public apiKey: ApiKeyInfo;
+    public commands: CommandsInfo;
     public autoQuery: AutoQueryInfo;
     public validation: ValidationInfo;
     public sharpPages: SharpPagesInfo;
@@ -728,6 +955,7 @@ export class PluginInfo
     public profiling: ProfilingInfo;
     public filesUpload: FilesUploadInfo;
     public adminUsers: AdminUsersInfo;
+    public adminIdentityUsers: AdminIdentityUsersInfo;
     public adminRedis: AdminRedisInfo;
     public adminDatabase: AdminDatabaseInfo;
     public meta: { [index: string]: string; };
@@ -826,6 +1054,7 @@ export class MetadataOperationType
     public dataModel: MetadataTypeName;
     public viewModel: MetadataTypeName;
     public requiresAuth?: boolean;
+    public requiresApiKey?: boolean;
     public requiredRoles: string[];
     public requiresAnyRole: string[];
     public requiredPermissions: string[];
@@ -854,80 +1083,6 @@ export class ServerStats
     public mqWorkers: { [index: string]: number; };
 
     public constructor(init?: Partial<ServerStats>) { (Object as any).assign(this, init); }
-}
-
-// @DataContract
-export class ResponseError
-{
-    // @DataMember(Order=1)
-    public errorCode: string;
-
-    // @DataMember(Order=2)
-    public fieldName: string;
-
-    // @DataMember(Order=3)
-    public message: string;
-
-    // @DataMember(Order=4)
-    public meta: { [index: string]: string; };
-
-    public constructor(init?: Partial<ResponseError>) { (Object as any).assign(this, init); }
-}
-
-// @DataContract
-export class ResponseStatus
-{
-    // @DataMember(Order=1)
-    public errorCode: string;
-
-    // @DataMember(Order=2)
-    public message: string;
-
-    // @DataMember(Order=3)
-    public stackTrace: string;
-
-    // @DataMember(Order=4)
-    public errors: ResponseError[];
-
-    // @DataMember(Order=5)
-    public meta: { [index: string]: string; };
-
-    public constructor(init?: Partial<ResponseStatus>) { (Object as any).assign(this, init); }
-}
-
-export class RequestLogEntry
-{
-    public id: number;
-    public traceId: string;
-    public operationName: string;
-    public dateTime: string;
-    public statusCode: number;
-    public statusDescription: string;
-    public httpMethod: string;
-    public absoluteUri: string;
-    public pathInfo: string;
-    // @StringLength(2147483647)
-    public requestBody: string;
-
-    public requestDto: Object;
-    public userAuthId: string;
-    public sessionId: string;
-    public ipAddress: string;
-    public forwardedFor: string;
-    public referer: string;
-    public headers: { [index: string]: string; };
-    public formData: { [index: string]: string; };
-    public items: { [index: string]: string; };
-    public responseHeaders: { [index: string]: string; };
-    public session: Object;
-    public responseDto: Object;
-    public errorResponse: Object;
-    public exceptionSource: string;
-    public exceptionData: any;
-    public requestDuration: string;
-    public meta: { [index: string]: string; };
-
-    public constructor(init?: Partial<RequestLogEntry>) { (Object as any).assign(this, init); }
 }
 
 export class DiagnosticEntry
@@ -976,6 +1131,170 @@ export class RedisText
     public constructor(init?: Partial<RedisText>) { (Object as any).assign(this, init); }
 }
 
+export class CommandSummary
+{
+    public type: string;
+    public name: string;
+    public count: number;
+    public failed: number;
+    public retries: number;
+    public totalMs: number;
+    public minMs: number;
+    public maxMs: number;
+    public averageMs: number;
+    public medianMs: number;
+    public lastError?: ResponseStatus;
+    public timings: ConcurrentQueue<number>;
+
+    public constructor(init?: Partial<CommandSummary>) { (Object as any).assign(this, init); }
+}
+
+export class CommandResult
+{
+    public type: string;
+    public name: string;
+    public ms?: number;
+    public at: string;
+    public request: string;
+    public retries?: number;
+    public attempt: number;
+    public error?: ResponseStatus;
+
+    public constructor(init?: Partial<CommandResult>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class PartialApiKey
+{
+    // @DataMember(Order=1)
+    public id: number;
+
+    // @DataMember(Order=2)
+    public name: string;
+
+    // @DataMember(Order=3)
+    public userId: string;
+
+    // @DataMember(Order=4)
+    public userName: string;
+
+    // @DataMember(Order=5)
+    public visibleKey: string;
+
+    // @DataMember(Order=6)
+    public environment: string;
+
+    // @DataMember(Order=7)
+    public createdDate: string;
+
+    // @DataMember(Order=8)
+    public expiryDate?: string;
+
+    // @DataMember(Order=9)
+    public cancelledDate?: string;
+
+    // @DataMember(Order=10)
+    public lastUsedDate?: string;
+
+    // @DataMember(Order=11)
+    public scopes: string[];
+
+    // @DataMember(Order=12)
+    public features: string[];
+
+    // @DataMember(Order=13)
+    public restrictTo: string[];
+
+    // @DataMember(Order=14)
+    public notes: string;
+
+    // @DataMember(Order=15)
+    public refId?: number;
+
+    // @DataMember(Order=16)
+    public refIdStr: string;
+
+    // @DataMember(Order=17)
+    public meta: { [index: string]: string; };
+
+    // @DataMember(Order=18)
+    public active: boolean;
+
+    public constructor(init?: Partial<PartialApiKey>) { (Object as any).assign(this, init); }
+}
+
+export class JobStatSummary
+{
+    public name: string;
+    public total: number;
+    public completed: number;
+    public retries: number;
+    public failed: number;
+    public cancelled: number;
+
+    public constructor(init?: Partial<JobStatSummary>) { (Object as any).assign(this, init); }
+}
+
+export class HourSummary
+{
+    public hour: string;
+    public total: number;
+    public completed: number;
+    public failed: number;
+    public cancelled: number;
+
+    public constructor(init?: Partial<HourSummary>) { (Object as any).assign(this, init); }
+}
+
+export class WorkerStats
+{
+    public name: string;
+    public queued: number;
+    public received: number;
+    public completed: number;
+    public retries: number;
+    public failed: number;
+    public runningJob?: number;
+    public runningTime?: string;
+
+    public constructor(init?: Partial<WorkerStats>) { (Object as any).assign(this, init); }
+}
+
+export class RequestLogEntry
+{
+    public id: number;
+    public traceId: string;
+    public operationName: string;
+    public dateTime: string;
+    public statusCode: number;
+    public statusDescription: string;
+    public httpMethod: string;
+    public absoluteUri: string;
+    public pathInfo: string;
+    // @StringLength(2147483647)
+    public requestBody: string;
+
+    public requestDto: Object;
+    public userAuthId: string;
+    public sessionId: string;
+    public ipAddress: string;
+    public forwardedFor: string;
+    public referer: string;
+    public headers: { [index: string]: string; };
+    public formData: { [index: string]: string; };
+    public items: { [index: string]: string; };
+    public responseHeaders: { [index: string]: string; };
+    public session: Object;
+    public responseDto: Object;
+    public errorResponse: Object;
+    public exceptionSource: string;
+    public exceptionData: any;
+    public requestDuration: string;
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<RequestLogEntry>) { (Object as any).assign(this, init); }
+}
+
 export class KeyValuePair<TKey, TValue>
 {
     public key: TKey;
@@ -1009,18 +1328,6 @@ export class AdminDashboardResponse
 }
 
 // @DataContract
-export class GetValidationRulesResponse
-{
-    // @DataMember(Order=1)
-    public results: ValidationRule[];
-
-    // @DataMember(Order=2)
-    public responseStatus: ResponseStatus;
-
-    public constructor(init?: Partial<GetValidationRulesResponse>) { (Object as any).assign(this, init); }
-}
-
-// @DataContract
 export class AuthenticateResponse implements IHasSessionId, IHasBearerToken
 {
     // @DataMember(Order=1)
@@ -1045,18 +1352,24 @@ export class AuthenticateResponse implements IHasSessionId, IHasBearerToken
     public refreshToken: string;
 
     // @DataMember(Order=8)
-    public profileUrl: string;
+    public refreshTokenExpiry?: string;
 
     // @DataMember(Order=9)
-    public roles: string[];
+    public profileUrl: string;
 
     // @DataMember(Order=10)
-    public permissions: string[];
+    public roles: string[];
 
     // @DataMember(Order=11)
-    public responseStatus: ResponseStatus;
+    public permissions: string[];
 
     // @DataMember(Order=12)
+    public authProvider: string;
+
+    // @DataMember(Order=13)
+    public responseStatus: ResponseStatus;
+
+    // @DataMember(Order=14)
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<AuthenticateResponse>) { (Object as any).assign(this, init); }
@@ -1141,7 +1454,7 @@ export class AdminDeleteUserResponse
 }
 
 // @DataContract
-export class QueryResponse<CrudEvent>
+export class QueryResponse<RequestLog>
 {
     // @DataMember(Order=1)
     public offset: number;
@@ -1150,7 +1463,7 @@ export class QueryResponse<CrudEvent>
     public total: number;
 
     // @DataMember(Order=3)
-    public results: CrudEvent[];
+    public results: RequestLog[];
 
     // @DataMember(Order=4)
     public meta: { [index: string]: string; };
@@ -1158,25 +1471,7 @@ export class QueryResponse<CrudEvent>
     // @DataMember(Order=5)
     public responseStatus: ResponseStatus;
 
-    public constructor(init?: Partial<QueryResponse<CrudEvent>>) { (Object as any).assign(this, init); }
-}
-
-// @DataContract
-export class RequestLogsResponse
-{
-    // @DataMember(Order=1)
-    public results: RequestLogEntry[];
-
-    // @DataMember(Order=2)
-    public usage: { [index: string]: string; };
-
-    // @DataMember(Order=3)
-    public total: number;
-
-    // @DataMember(Order=4)
-    public responseStatus: ResponseStatus;
-
-    public constructor(init?: Partial<RequestLogsResponse>) { (Object as any).assign(this, init); }
+    public constructor(init?: Partial<QueryResponse<RequestLog>>) { (Object as any).assign(this, init); }
 }
 
 export class AdminProfilingResponse
@@ -1210,6 +1505,152 @@ export class AdminDatabaseResponse
     public constructor(init?: Partial<AdminDatabaseResponse>) { (Object as any).assign(this, init); }
 }
 
+export class ViewCommandsResponse
+{
+    public commandTotals: CommandSummary[];
+    public latestCommands: CommandResult[];
+    public latestFailed: CommandResult[];
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<ViewCommandsResponse>) { (Object as any).assign(this, init); }
+}
+
+export class ExecuteCommandResponse
+{
+    public commandResult?: CommandResult;
+    public result?: string;
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<ExecuteCommandResponse>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class AdminApiKeysResponse
+{
+    // @DataMember(Order=1)
+    public results: PartialApiKey[];
+
+    // @DataMember(Order=2)
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<AdminApiKeysResponse>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class AdminApiKeyResponse
+{
+    // @DataMember(Order=1)
+    public result: string;
+
+    // @DataMember(Order=2)
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<AdminApiKeyResponse>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class EmptyResponse
+{
+    // @DataMember(Order=1)
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<EmptyResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminJobDashboardResponse
+{
+    public commands: JobStatSummary[];
+    public apis: JobStatSummary[];
+    public workers: JobStatSummary[];
+    public today: HourSummary[];
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<AdminJobDashboardResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminJobInfoResponse
+{
+    public monthDbs: string[];
+    public tableCounts: { [index: string]: number; };
+    public workerStats: WorkerStats[];
+    public queueCounts: { [index: string]: number; };
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<AdminJobInfoResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminGetJobResponse
+{
+    public result: JobSummary;
+    public queued?: BackgroundJob;
+    public completed?: CompletedJob;
+    public failed?: FailedJob;
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<AdminGetJobResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminGetJobProgressResponse
+{
+    public state: BackgroundJobState;
+    public progress?: number;
+    public status?: string;
+    public logs?: string;
+    public durationMs?: number;
+    public error?: ResponseStatus;
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<AdminGetJobProgressResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminRequeueFailedJobsJobsResponse
+{
+    public results: number[];
+    public errors: { [index: number]: string; };
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<AdminRequeueFailedJobsJobsResponse>) { (Object as any).assign(this, init); }
+}
+
+export class AdminCancelJobsResponse
+{
+    public results: number[];
+    public errors: { [index: number]: string; };
+    public responseStatus?: ResponseStatus;
+
+    public constructor(init?: Partial<AdminCancelJobsResponse>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class RequestLogsResponse
+{
+    // @DataMember(Order=1)
+    public results: RequestLogEntry[];
+
+    // @DataMember(Order=2)
+    public usage: { [index: string]: string; };
+
+    // @DataMember(Order=3)
+    public total: number;
+
+    // @DataMember(Order=4)
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<RequestLogsResponse>) { (Object as any).assign(this, init); }
+}
+
+// @DataContract
+export class GetValidationRulesResponse
+{
+    // @DataMember(Order=1)
+    public results: ValidationRule[];
+
+    // @DataMember(Order=2)
+    public responseStatus: ResponseStatus;
+
+    public constructor(init?: Partial<GetValidationRulesResponse>) { (Object as any).assign(this, init); }
+}
+
 // @Route("/metadata/app")
 // @DataContract
 export class MetadataApp implements IReturn<AppMetadata>, IGet
@@ -1226,62 +1667,18 @@ export class MetadataApp implements IReturn<AppMetadata>, IGet
     public createResponse() { return new AppMetadata(); }
 }
 
-export class AdminDashboard implements IReturn<AdminDashboardResponse>
+export class AdminDashboard implements IReturn<AdminDashboardResponse>, IGet
 {
 
     public constructor(init?: Partial<AdminDashboard>) { (Object as any).assign(this, init); }
     public getTypeName() { return 'AdminDashboard'; }
-    public getMethod() { return 'POST'; }
+    public getMethod() { return 'GET'; }
     public createResponse() { return new AdminDashboardResponse(); }
 }
 
-// @Route("/validation/rules/{Type}")
-// @DataContract
-export class GetValidationRules implements IReturn<GetValidationRulesResponse>
-{
-    // @DataMember(Order=1)
-    public authSecret: string;
-
-    // @DataMember(Order=2)
-    public type: string;
-
-    public constructor(init?: Partial<GetValidationRules>) { (Object as any).assign(this, init); }
-    public getTypeName() { return 'GetValidationRules'; }
-    public getMethod() { return 'POST'; }
-    public createResponse() { return new GetValidationRulesResponse(); }
-}
-
-// @Route("/validation/rules")
-// @DataContract
-export class ModifyValidationRules implements IReturnVoid
-{
-    // @DataMember(Order=1)
-    public authSecret: string;
-
-    // @DataMember(Order=2)
-    public saveRules: ValidationRule[];
-
-    // @DataMember(Order=3)
-    public deleteRuleIds: number[];
-
-    // @DataMember(Order=4)
-    public suspendRuleIds: number[];
-
-    // @DataMember(Order=5)
-    public unsuspendRuleIds: number[];
-
-    // @DataMember(Order=6)
-    public clearCache?: boolean;
-
-    public constructor(init?: Partial<ModifyValidationRules>) { (Object as any).assign(this, init); }
-    public getTypeName() { return 'ModifyValidationRules'; }
-    public getMethod() { return 'POST'; }
-    public createResponse() {}
-}
-
 /** @description Sign In */
-// @Route("/auth", "OPTIONS,GET,POST,DELETE")
-// @Route("/auth/{provider}", "OPTIONS,GET,POST,DELETE")
+// @Route("/auth", "GET,POST")
+// @Route("/auth/{provider}", "GET,POST")
 // @Api(Description="Sign In")
 // @DataContract
 export class Authenticate implements IReturn<AuthenticateResponse>, IPost
@@ -1291,57 +1688,27 @@ export class Authenticate implements IReturn<AuthenticateResponse>, IPost
     public provider: string;
 
     // @DataMember(Order=2)
-    public state: string;
-
-    // @DataMember(Order=3)
-    public oauth_token: string;
-
-    // @DataMember(Order=4)
-    public oauth_verifier: string;
-
-    // @DataMember(Order=5)
     public userName: string;
 
-    // @DataMember(Order=6)
+    // @DataMember(Order=3)
     public password: string;
 
-    // @DataMember(Order=7)
+    // @DataMember(Order=4)
     public rememberMe?: boolean;
 
-    // @DataMember(Order=9)
-    public errorView: string;
-
-    // @DataMember(Order=10)
-    public nonce: string;
-
-    // @DataMember(Order=11)
-    public uri: string;
-
-    // @DataMember(Order=12)
-    public response: string;
-
-    // @DataMember(Order=13)
-    public qop: string;
-
-    // @DataMember(Order=14)
-    public nc: string;
-
-    // @DataMember(Order=15)
-    public cnonce: string;
-
-    // @DataMember(Order=17)
+    // @DataMember(Order=5)
     public accessToken: string;
 
-    // @DataMember(Order=18)
+    // @DataMember(Order=6)
     public accessTokenSecret: string;
 
-    // @DataMember(Order=19)
-    public scope: string;
-
-    // @DataMember(Order=20)
+    // @DataMember(Order=7)
     public returnUrl: string;
 
-    // @DataMember(Order=21)
+    // @DataMember(Order=8)
+    public errorView: string;
+
+    // @DataMember(Order=9)
     public meta: { [index: string]: string; };
 
     public constructor(init?: Partial<Authenticate>) { (Object as any).assign(this, init); }
@@ -1455,15 +1822,18 @@ export class AdminUpdateUser extends AdminUserBase implements IReturn<AdminUserR
     public unlockUser?: boolean;
 
     // @DataMember(Order=13)
-    public addRoles: string[];
+    public lockUserUntil?: string;
 
     // @DataMember(Order=14)
-    public removeRoles: string[];
+    public addRoles: string[];
 
     // @DataMember(Order=15)
-    public addPermissions: string[];
+    public removeRoles: string[];
 
     // @DataMember(Order=16)
+    public addPermissions: string[];
+
+    // @DataMember(Order=17)
     public removePermissions: string[];
 
     public constructor(init?: Partial<AdminUpdateUser>) { super(init); (Object as any).assign(this, init); }
@@ -1484,28 +1854,349 @@ export class AdminDeleteUser implements IReturn<AdminDeleteUserResponse>, IDelet
     public createResponse() { return new AdminDeleteUserResponse(); }
 }
 
-// @Route("/crudevents/{Model}")
+export class AdminQueryRequestLogs extends QueryDb<RequestLog> implements IReturn<QueryResponse<RequestLog>>
+{
+    public month?: string;
+
+    public constructor(init?: Partial<AdminQueryRequestLogs>) { super(init); (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminQueryRequestLogs'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new QueryResponse<RequestLog>(); }
+}
+
+export class AdminProfiling implements IReturn<AdminProfilingResponse>
+{
+    public source?: string;
+    public eventType?: string;
+    public threadId?: number;
+    public traceId?: string;
+    public userAuthId?: string;
+    public sessionId?: string;
+    public tag?: string;
+    public skip: number;
+    public take?: number;
+    public orderBy?: string;
+    public withErrors?: boolean;
+    public pending?: boolean;
+
+    public constructor(init?: Partial<AdminProfiling>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminProfiling'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new AdminProfilingResponse(); }
+}
+
+export class AdminRedis implements IReturn<AdminRedisResponse>, IPost
+{
+    public db?: number;
+    public query?: string;
+    public reconnect?: RedisEndpointInfo;
+    public take?: number;
+    public position?: number;
+    public args?: string[];
+
+    public constructor(init?: Partial<AdminRedis>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminRedis'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new AdminRedisResponse(); }
+}
+
+export class AdminDatabase implements IReturn<AdminDatabaseResponse>, IGet
+{
+    public db?: string;
+    public schema?: string;
+    public table?: string;
+    public fields?: string[];
+    public take?: number;
+    public skip?: number;
+    public orderBy?: string;
+    public include?: string;
+
+    public constructor(init?: Partial<AdminDatabase>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminDatabase'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new AdminDatabaseResponse(); }
+}
+
+export class ViewCommands implements IReturn<ViewCommandsResponse>, IGet
+{
+    public include?: string[];
+    public skip?: number;
+    public take?: number;
+
+    public constructor(init?: Partial<ViewCommands>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'ViewCommands'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new ViewCommandsResponse(); }
+}
+
+export class ExecuteCommand implements IReturn<ExecuteCommandResponse>, IPost
+{
+    public command: string;
+    public requestJson?: string;
+
+    public constructor(init?: Partial<ExecuteCommand>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'ExecuteCommand'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new ExecuteCommandResponse(); }
+}
+
 // @DataContract
-export class GetCrudEvents extends QueryDb<CrudEvent> implements IReturn<QueryResponse<CrudEvent>>
+export class AdminQueryApiKeys implements IReturn<AdminApiKeysResponse>, IGet
 {
     // @DataMember(Order=1)
-    public authSecret: string;
+    public id?: number;
 
     // @DataMember(Order=2)
-    public model: string;
+    public search: string;
 
     // @DataMember(Order=3)
-    public modelId: string;
+    public userId: string;
 
-    public constructor(init?: Partial<GetCrudEvents>) { super(init); (Object as any).assign(this, init); }
-    public getTypeName() { return 'GetCrudEvents'; }
+    // @DataMember(Order=4)
+    public userName: string;
+
+    // @DataMember(Order=5)
+    public orderBy: string;
+
+    // @DataMember(Order=6)
+    public skip?: number;
+
+    // @DataMember(Order=7)
+    public take?: number;
+
+    public constructor(init?: Partial<AdminQueryApiKeys>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminQueryApiKeys'; }
     public getMethod() { return 'GET'; }
-    public createResponse() { return new QueryResponse<CrudEvent>(); }
+    public createResponse() { return new AdminApiKeysResponse(); }
+}
+
+// @DataContract
+export class AdminCreateApiKey implements IReturn<AdminApiKeyResponse>, IPost
+{
+    // @DataMember(Order=1)
+    public name: string;
+
+    // @DataMember(Order=2)
+    public userId: string;
+
+    // @DataMember(Order=3)
+    public userName: string;
+
+    // @DataMember(Order=4)
+    public scopes: string[];
+
+    // @DataMember(Order=5)
+    public features: string[];
+
+    // @DataMember(Order=6)
+    public restrictTo: string[];
+
+    // @DataMember(Order=7)
+    public expiryDate?: string;
+
+    // @DataMember(Order=8)
+    public notes: string;
+
+    // @DataMember(Order=9)
+    public refId?: number;
+
+    // @DataMember(Order=10)
+    public refIdStr: string;
+
+    // @DataMember(Order=11)
+    public meta: { [index: string]: string; };
+
+    public constructor(init?: Partial<AdminCreateApiKey>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminCreateApiKey'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new AdminApiKeyResponse(); }
+}
+
+// @DataContract
+export class AdminUpdateApiKey implements IReturn<EmptyResponse>, IPatch
+{
+    // @DataMember(Order=1)
+    // @Validate(Validator="GreaterThan(0)")
+    public id: number;
+
+    // @DataMember(Order=2)
+    public name: string;
+
+    // @DataMember(Order=3)
+    public userId: string;
+
+    // @DataMember(Order=4)
+    public userName: string;
+
+    // @DataMember(Order=5)
+    public scopes: string[];
+
+    // @DataMember(Order=6)
+    public features: string[];
+
+    // @DataMember(Order=7)
+    public restrictTo: string[];
+
+    // @DataMember(Order=8)
+    public expiryDate?: string;
+
+    // @DataMember(Order=9)
+    public cancelledDate?: string;
+
+    // @DataMember(Order=10)
+    public notes: string;
+
+    // @DataMember(Order=11)
+    public refId?: number;
+
+    // @DataMember(Order=12)
+    public refIdStr: string;
+
+    // @DataMember(Order=13)
+    public meta: { [index: string]: string; };
+
+    // @DataMember(Order=14)
+    public reset: string[];
+
+    public constructor(init?: Partial<AdminUpdateApiKey>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminUpdateApiKey'; }
+    public getMethod() { return 'PATCH'; }
+    public createResponse() { return new EmptyResponse(); }
+}
+
+// @DataContract
+export class AdminDeleteApiKey implements IReturn<EmptyResponse>, IDelete
+{
+    // @DataMember(Order=1)
+    // @Validate(Validator="GreaterThan(0)")
+    public id?: number;
+
+    public constructor(init?: Partial<AdminDeleteApiKey>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminDeleteApiKey'; }
+    public getMethod() { return 'DELETE'; }
+    public createResponse() { return new EmptyResponse(); }
+}
+
+export class AdminJobDashboard implements IReturn<AdminJobDashboardResponse>, IGet
+{
+    public from?: string;
+    public to?: string;
+
+    public constructor(init?: Partial<AdminJobDashboard>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminJobDashboard'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new AdminJobDashboardResponse(); }
+}
+
+export class AdminJobInfo implements IReturn<AdminJobInfoResponse>, IGet
+{
+    public month?: string;
+
+    public constructor(init?: Partial<AdminJobInfo>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminJobInfo'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new AdminJobInfoResponse(); }
+}
+
+export class AdminGetJob implements IReturn<AdminGetJobResponse>, IGet
+{
+    public id?: number;
+    public refId?: string;
+
+    public constructor(init?: Partial<AdminGetJob>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminGetJob'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new AdminGetJobResponse(); }
+}
+
+export class AdminGetJobProgress implements IReturn<AdminGetJobProgressResponse>, IGet
+{
+    // @Validate(Validator="GreaterThan(0)")
+    public id: number;
+
+    public logStart?: number;
+
+    public constructor(init?: Partial<AdminGetJobProgress>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminGetJobProgress'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new AdminGetJobProgressResponse(); }
+}
+
+export class AdminQueryBackgroundJobs extends QueryDb<BackgroundJob> implements IReturn<QueryResponse<BackgroundJob>>
+{
+    public id?: number;
+    public refId?: string;
+
+    public constructor(init?: Partial<AdminQueryBackgroundJobs>) { super(init); (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminQueryBackgroundJobs'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new QueryResponse<BackgroundJob>(); }
+}
+
+export class AdminQueryJobSummary extends QueryDb<JobSummary> implements IReturn<QueryResponse<JobSummary>>
+{
+    public id?: number;
+    public refId?: string;
+
+    public constructor(init?: Partial<AdminQueryJobSummary>) { super(init); (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminQueryJobSummary'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new QueryResponse<JobSummary>(); }
+}
+
+export class AdminQueryScheduledTasks extends QueryDb<ScheduledTask> implements IReturn<QueryResponse<ScheduledTask>>
+{
+
+    public constructor(init?: Partial<AdminQueryScheduledTasks>) { super(init); (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminQueryScheduledTasks'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new QueryResponse<ScheduledTask>(); }
+}
+
+export class AdminQueryCompletedJobs extends QueryDb<CompletedJob> implements IReturn<QueryResponse<CompletedJob>>
+{
+    public month?: string;
+
+    public constructor(init?: Partial<AdminQueryCompletedJobs>) { super(init); (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminQueryCompletedJobs'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new QueryResponse<CompletedJob>(); }
+}
+
+export class AdminQueryFailedJobs extends QueryDb<FailedJob> implements IReturn<QueryResponse<FailedJob>>
+{
+    public month?: string;
+
+    public constructor(init?: Partial<AdminQueryFailedJobs>) { super(init); (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminQueryFailedJobs'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new QueryResponse<FailedJob>(); }
+}
+
+export class AdminRequeueFailedJobs implements IReturn<AdminRequeueFailedJobsJobsResponse>
+{
+    public ids?: number[];
+
+    public constructor(init?: Partial<AdminRequeueFailedJobs>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminRequeueFailedJobs'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() { return new AdminRequeueFailedJobsJobsResponse(); }
+}
+
+export class AdminCancelJobs implements IReturn<AdminCancelJobsResponse>, IGet
+{
+    public ids?: number[];
+    public worker?: string;
+
+    public constructor(init?: Partial<AdminCancelJobs>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'AdminCancelJobs'; }
+    public getMethod() { return 'GET'; }
+    public createResponse() { return new AdminCancelJobsResponse(); }
 }
 
 // @Route("/requestlogs")
 // @DataContract
-export class RequestLogs implements IReturn<RequestLogsResponse>
+export class RequestLogs implements IReturn<RequestLogsResponse>, IGet
 {
     // @DataMember(Order=1)
     public beforeSecs?: number;
@@ -1575,61 +2266,52 @@ export class RequestLogs implements IReturn<RequestLogsResponse>
 
     public constructor(init?: Partial<RequestLogs>) { (Object as any).assign(this, init); }
     public getTypeName() { return 'RequestLogs'; }
-    public getMethod() { return 'POST'; }
+    public getMethod() { return 'GET'; }
     public createResponse() { return new RequestLogsResponse(); }
 }
 
-export class AdminProfiling implements IReturn<AdminProfilingResponse>
+// @Route("/validation/rules/{Type}")
+// @DataContract
+export class GetValidationRules implements IReturn<GetValidationRulesResponse>, IGet
 {
-    public source?: string;
-    public eventType?: string;
-    public threadId?: number;
-    public traceId?: string;
-    public userAuthId?: string;
-    public sessionId?: string;
-    public tag?: string;
-    public skip: number;
-    public take?: number;
-    public orderBy?: string;
-    public withErrors?: boolean;
-    public pending?: boolean;
+    // @DataMember(Order=1)
+    public authSecret: string;
 
-    public constructor(init?: Partial<AdminProfiling>) { (Object as any).assign(this, init); }
-    public getTypeName() { return 'AdminProfiling'; }
-    public getMethod() { return 'POST'; }
-    public createResponse() { return new AdminProfilingResponse(); }
-}
+    // @DataMember(Order=2)
+    public type: string;
 
-export class AdminRedis implements IReturn<AdminRedisResponse>, IPost
-{
-    public db?: number;
-    public query?: string;
-    public reconnect?: RedisEndpointInfo;
-    public take?: number;
-    public position?: number;
-    public args?: string[];
-
-    public constructor(init?: Partial<AdminRedis>) { (Object as any).assign(this, init); }
-    public getTypeName() { return 'AdminRedis'; }
-    public getMethod() { return 'POST'; }
-    public createResponse() { return new AdminRedisResponse(); }
-}
-
-export class AdminDatabase implements IReturn<AdminDatabaseResponse>, IGet
-{
-    public db?: string;
-    public schema?: string;
-    public table?: string;
-    public fields?: string[];
-    public take?: number;
-    public skip?: number;
-    public orderBy?: string;
-    public include?: string;
-
-    public constructor(init?: Partial<AdminDatabase>) { (Object as any).assign(this, init); }
-    public getTypeName() { return 'AdminDatabase'; }
+    public constructor(init?: Partial<GetValidationRules>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'GetValidationRules'; }
     public getMethod() { return 'GET'; }
-    public createResponse() { return new AdminDatabaseResponse(); }
+    public createResponse() { return new GetValidationRulesResponse(); }
+}
+
+// @Route("/validation/rules")
+// @DataContract
+export class ModifyValidationRules implements IReturnVoid
+{
+    // @DataMember(Order=1)
+    public authSecret: string;
+
+    // @DataMember(Order=2)
+    public saveRules: ValidationRule[];
+
+    // @DataMember(Order=3)
+    public deleteRuleIds: number[];
+
+    // @DataMember(Order=4)
+    public suspendRuleIds: number[];
+
+    // @DataMember(Order=5)
+    public unsuspendRuleIds: number[];
+
+    // @DataMember(Order=6)
+    public clearCache?: boolean;
+
+    public constructor(init?: Partial<ModifyValidationRules>) { (Object as any).assign(this, init); }
+    public getTypeName() { return 'ModifyValidationRules'; }
+    public getMethod() { return 'POST'; }
+    public createResponse() {}
 }
 
 

@@ -32,6 +32,33 @@ public class ServiceMetadata(List<RestPath> restPaths)
         
     public HashSet<Type> ForceInclude { get; set; } = new();
 
+    public static HashSet<string> CollectionTypes =
+    [
+        "List`1",
+        "HashSet`1",
+        "Queue`1",
+        "Stack`1",
+    ];
+    public static HashSet<string> CollectionInterfaceTypes =
+    [
+        "IEnumerable`1",
+        "ICollection`1",
+        "IEnumerable",
+    ];
+    public static HashSet<string> AnyCollectionTypes = new(CollectionTypes.Concat(CollectionInterfaceTypes));
+    public static HashSet<string> DictionaryTypes = new() {
+        "Dictionary`2",
+        "OrderedDictionary",
+        "StringDictionary",
+    };
+    public static HashSet<string> DictionaryInterfaceTypes = new() {
+        "IDictionary`2",
+        "IOrderedDictionary`2",
+        "IDictionary",
+        "IOrderedDictionary",
+    };
+    public static HashSet<string> AnyDictionaryTypes = new(DictionaryTypes.Concat(DictionaryInterfaceTypes));
+
     public void Add(Type serviceType, Type requestType, Type? responseType)
     {
         if (requestType.IsArray) //Custom AutoBatched requests
@@ -163,11 +190,15 @@ public class ServiceMetadata(List<RestPath> restPaths)
             "ServiceStack.CrudTablesService",
             "ServiceStack.CrudCodeGenTypesService",
             "ServiceStack.AdminDatabaseService",
+            "ServiceStack.AdminApiKeysService",
+            "ServiceStack.UserApiKeysService",
             // ServiceStack.Extensions
             "ServiceStack.Auth.ConvertSessionToTokenService",
             "ServiceStack.Auth.GetAccessTokenIdentityService",
             "ServiceStack.Auth.IdentityAssignRolesService",
             "ServiceStack.Auth.IdentityUnAssignRolesService",
+            // ServiceStack.Jobs
+            "ServiceStack.Jobs.AdminJobServices",
         ];
 
         //Only count non-core ServiceStack Services, i.e. defined outside of ServiceStack.dll or Swagger
@@ -554,7 +585,7 @@ public class ServiceMetadata(List<RestPath> restPaths)
         if (dtoTypesMap == null)
         {
             var typesMap = new Dictionary<string, Type>();
-            duplicateTypeNames = new HashSet<string>();
+            duplicateTypeNames = [];
 
             foreach (var dto in GetAllDtos())
             {
@@ -676,11 +707,12 @@ public class ServiceMetadata(List<RestPath> restPaths)
         }
     }
 
-    public static bool IsDtoType(Type? type) => type != null &&
-                                                type.Namespace?.StartsWith("System") == false &&
-                                                type.IsClass && type != typeof(string) &&
-                                                !type.IsArray &&
-                                                !type.HasInterface(typeof(IService));
+    public static bool IsDtoType(Type? type) => 
+        type != null &&
+        type.Namespace?.StartsWith("System") == false &&
+        type.IsClass && type != typeof(string) &&
+        !type.IsArray &&
+        !type.HasInterface(typeof(IService));
 
     public List<MetadataType> GetMetadataTypesForOperation(IRequest httpReq, Operation op)
     {
@@ -844,9 +876,7 @@ public class ServiceMetadata(List<RestPath> restPaths)
 
     public List<string> GetAllPermissions()
     {
-        var to = new List<string> {
-        };
-
+        var to = new List<string>();
         foreach (var op in OperationsMap.Values)
         {
             op.RequiredPermissions.Each(x => to.AddIfNotExists(x));
@@ -868,7 +898,6 @@ public class ServiceMetadata(List<RestPath> restPaths)
                 : dto.ConvertTo(requestType);
         return requestDto;
     }
-        
 }
 
 public class Operation : ICloneable
@@ -889,6 +918,7 @@ public class Operation : ICloneable
     public List<IRequestFilterBase>? RequestFilterAttributes { get; set; }
     public List<IResponseFilterBase>? ResponseFilterAttributes { get; set; }
     public bool RequiresAuthentication { get; set; }
+    public bool RequiresApiKey { get; set; }
     public List<string> RequiredRoles { get; set; } = [];
     public List<string> RequiresAnyRole { get; set; } = [];
     public List<string> RequiredPermissions { get; set; } = [];
@@ -921,14 +951,15 @@ public class Operation : ICloneable
         Routes = Routes?.ToList(),
         RequestFilterAttributes = RequestFilterAttributes,
         RequiresAuthentication = RequiresAuthentication,
-        RequiredRoles = RequiredRoles?.ToList(),
-        RequiresAnyRole = RequiresAnyRole?.ToList(),
-        RequiredPermissions = RequiredPermissions?.ToList(),
-        RequiresAnyPermission = RequiresAnyPermission?.ToList(),
+        RequiresApiKey = RequiresApiKey, 
+        RequiredRoles = RequiredRoles?.ToList() ?? [],
+        RequiresAnyRole = RequiresAnyRole?.ToList() ?? [],
+        RequiredPermissions = RequiredPermissions?.ToList() ?? [],
+        RequiresAnyPermission = RequiresAnyPermission?.ToList() ?? [],
         RequestTypeValidationRules = RequestTypeValidationRules?.ToList(),
         RequestPropertyValidationRules = RequestPropertyValidationRules?.ToList(),
         RequestPropertyAttributes = RequestPropertyAttributes,
-        Tags = Tags?.ToList(),
+        Tags = Tags?.ToList() ?? [],
         Description = Description,
         Notes = Notes,
         LocodeCss = LocodeCss,
@@ -961,6 +992,11 @@ public class Operation : ICloneable
                 RequiredPermissions ??= [];
                 validator.Permissions.Each(x => RequiredPermissions.AddIfNotExists(x));
             }
+        }
+        var apiKeyValidators = typeValidators.OfType<IApiKeyValidator>().ToList();
+        if (apiKeyValidators.Count > 0)
+        {
+            RequiresApiKey = true;
         }
     }
 
@@ -1147,16 +1183,16 @@ public static class MetadataTypeExtensions
             : defaultType;
     }
 
-    public static HashSet<string> CollectionTypes = new HashSet<string> {
-        "List`1",
-        "HashSet`1",
-        "Dictionary`2",
-        "Queue`1",
-        "Stack`1",
-    };
-
     public static bool IsCollection(this MetadataPropertyType prop) => 
-        CollectionTypes.Contains(prop.Type) || IsArray(prop);
+        ServiceMetadata.AnyCollectionTypes.Contains(prop.Type) || 
+        IsArray(prop);
+    public static bool IsEnumerable(this MetadataPropertyType prop) => prop.IsCollection() || prop.IsDictionary();
+    public static bool IsDictionary(this MetadataPropertyType prop) => 
+        ServiceMetadata.AnyDictionaryTypes.Contains(prop.Type);
+    public static bool IsInterface(this MetadataPropertyType prop) =>
+        ServiceMetadata.CollectionInterfaceTypes.Contains(prop.Type) ||
+        ServiceMetadata.DictionaryInterfaceTypes.Contains(prop.Type) ||
+        prop.PropertyInfo?.PropertyType.IsInterface == true;
 
     public static bool IsArray(this MetadataPropertyType prop) => 
         prop.Type.IndexOf('[') >= 0;

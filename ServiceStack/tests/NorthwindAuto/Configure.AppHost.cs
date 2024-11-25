@@ -1,9 +1,12 @@
 using Funq;
+using Microsoft.OpenApi.Models;
 using ServiceStack;
 using ServiceStack.Admin;
+using ServiceStack.AspNetCore.OpenApi;
 using ServiceStack.Configuration;
 using ServiceStack.HtmlModules;
 using ServiceStack.IO;
+using Swashbuckle.AspNetCore.SwaggerGen;
 using TalentBlazor.ServiceModel;
 using GetAccessTokenResponse = ServiceStack.GetAccessTokenResponse;
 
@@ -42,6 +45,9 @@ public class AppHost() : AppHostBase("My App"), IHostingStartup
                             : $"app/{ctx.Dto.GetId()}") + $"/{ctx.DateSegment}/{ctx.FileName}"),
                     readAccessRole:RoleNames.AllowAnon, writeAccessRole:RoleNames.AllowAnon)
             ));
+
+            services.ConfigurePlugin<NativeTypesFeature>(feature => 
+                feature.MetadataTypesConfig.InitializeCollections = false);
             
         });
 
@@ -51,7 +57,7 @@ public class AppHost() : AppHostBase("My App"), IHostingStartup
         SetConfig(new HostConfig
         {
             DebugMode = true,
-            AdminAuthSecret = "secret",
+            AdminAuthSecret = "p@55wOrd",
         });
         
         var memFs = GetVirtualFileSource<MemoryVirtualFiles>();
@@ -105,6 +111,7 @@ public class AppHost() : AppHostBase("My App"), IHostingStartup
             typeof(GetValidationRules),typeof(ModifyValidationRules),typeof(ValidationRule),typeof(ValidateRule),
             typeof(GetValidationRulesResponse),
         ];
+        Metadata.ForceInclude.Clear();
 
         ScriptContext.Args[nameof(AppData)] = new AppData
         {

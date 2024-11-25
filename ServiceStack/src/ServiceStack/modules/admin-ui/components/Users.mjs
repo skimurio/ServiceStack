@@ -2,7 +2,6 @@ import { computed, inject, nextTick, onMounted, ref, watch } from "vue"
 import { useClient, useMetadata } from "@servicestack/vue"
 import { AdminCreateUser, AdminDeleteUser, AdminGetUser, AdminQueryUsers, AdminUpdateUser } from "dtos"
 import { apiValueFmt, map, mapGet, humanify, ApiResult, toCamelCase } from "@servicestack/client"
-import { mapGetForInput } from "core"
 let adminUsersNav = null
 const formClass = 'shadow overflow-hidden sm:rounded-md bg-white max-w-screen-lg'
 const gridClass = 'grid grid-cols-12 gap-6'
@@ -355,7 +354,7 @@ export const EditUser = {
         
         const showForm = ref(true)
         function updateRequest(value) {
-            console.log('updateRequest', value)
+            console.debug('updateRequest', value)
         }
         
         return {

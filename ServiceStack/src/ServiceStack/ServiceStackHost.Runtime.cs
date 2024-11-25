@@ -806,24 +806,45 @@ public abstract partial class ServiceStackHost
                 FieldName = argEx.ParamName,
                 Message = errorMsg,
             });
-            return;
+        }
+        else
+        {
+            var serializationEx = ex as SerializationException;
+            if (serializationEx?.Data["errors"] is List<RequestBindingError> errors)
+            {
+                responseStatus.Errors ??= [];
+                responseStatus.Errors = errors.Select(e => new ResponseError
+                {
+                    ErrorCode = ex.GetType().Name,
+                    FieldName = e.PropertyName,
+                    Message = e.PropertyValueString != null 
+                        ? $"'{e.PropertyValueString}' is an Invalid value for '{e.PropertyName}'"
+                        : $"Invalid Value for '{e.PropertyName}'"
+                }).ToList();
+            }
         }
 
-        var serializationEx = ex as SerializationException;
-        if (serializationEx?.Data["errors"] is List<RequestBindingError> errors)
+        responseStatus.Message = SanitizeString(responseStatus.Message);
+        foreach (var error in responseStatus.Errors.Safe())
         {
-            responseStatus.Errors ??= [];
-            responseStatus.Errors = errors.Select(e => new ResponseError
-            {
-                ErrorCode = ex.GetType().Name,
-                FieldName = e.PropertyName,
-                Message = e.PropertyValueString != null 
-                    ? $"'{e.PropertyValueString}' is an Invalid value for '{e.PropertyName}'"
-                    : $"Invalid Value for '{e.PropertyName}'"
-            }).ToList();
+            error.Message = SanitizeString(error.Message);
         }
     }
 
+    /// <summary>
+    /// Sanitize strings against XSS returned in API Responses 
+    /// </summary>
+    public virtual string SanitizeString(string message)
+    {
+        if (string.IsNullOrEmpty(message)) return message;
+        // guard against XSS https://stackoverflow.com/q/78741326/85785
+        if (message.IndexOf("<script", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return message.HtmlEncodeLite();
+        }
+        return message;
+    }
+    
     /// <summary>
     /// Override to intercept when Sessions using sync APIs are saved
     /// </summary>
@@ -920,10 +941,19 @@ public abstract partial class ServiceStackHost
     /// </summary>
     public virtual object OnAfterExecute(IRequest req, object requestDto, object response)
     {
-        if (req.Response.Dto == null)
-            req.Response.Dto = response;
-
+        req.Response.Dto ??= response;
         return response;
+    }
+
+    public virtual void OnLogRequest(IRequest req, object requestDto, object response, TimeSpan elapsed)
+    {
+        GetPlugin<RequestLogsFeature>()?.RequestLogger.Log(req, requestDto, response, elapsed);
+#if NET6_0_OR_GREATER
+        if (requestDto != null)
+        {
+            GetPlugin<CommandsFeature>()?.AddRequest(requestDto, response, elapsed);
+        }
+#endif
     }
 
     /// <summary>

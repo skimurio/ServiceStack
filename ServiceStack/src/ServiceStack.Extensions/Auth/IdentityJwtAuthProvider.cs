@@ -15,30 +15,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using ServiceStack.Grpc;
 using ServiceStack.Host;
 using ServiceStack.Text;
 using ServiceStack.Text.Pools;
 using ServiceStack.Web;
 
 namespace ServiceStack.Auth;
-
-public record UserJwtTokens(string BearerToken, IRequireRefreshToken? RefreshToken);
-
-public interface IIdentityJwtAuthProvider
-{
-    string? AuthenticationScheme { get; }
-    List<string> DeleteCookiesOnJwtCookies { get; }
-    JwtBearerOptions? Options { get; }
-    bool EnableRefreshToken { get; }
-    bool RequireSecureConnection { get; }
-    string Audience { get; }
-    TimeSpan ExpireTokensIn { get; }
-    Task<List<Claim>> GetUserClaimsAsync(string userName, IRequest? req = null);
-    string CreateJwtBearerToken(List<Claim> claims, string audience, DateTime expires);
-    Task<string> CreateBearerTokenAsync(string userName, IRequest? req = null);
-    Task<UserJwtTokens> CreateBearerAndRefreshTokenAsync(string userName, IRequest? req = null);
-    Task<string> CreateAccessTokenFromRefreshTokenAsync(string refreshToken, IRequest? req = null);
-}
 
 /// <summary>
 /// Converts an MVC JwtBearer Cookie into a ServiceStack Session
@@ -261,6 +244,9 @@ public class IdentityJwtAuthProvider<TUser,TKey> :
         var req = ctx.AuthService.Request;
         if (req.IsInProcessRequest())
             return ctx.AuthResponse;
+        
+        if (ctx.Request is GrpcRequest)
+            return ctx.AuthResponse;
 
         if (ctx.AuthResponse.BearerToken == null)
             return ctx.AuthResponse;
@@ -310,10 +296,7 @@ public class IdentityJwtAuthProvider<TUser,TKey> :
             var principal = new JwtSecurityTokenHandler().ValidateToken(bearerToken,
                 Options!.TokenValidationParameters, out SecurityToken validatedToken);
 
-            var jwtToken = (JwtSecurityToken)validatedToken;
-            var claims = jwtToken.Claims.ToList();
-
-            var jwtSession = CreateSessionFromClaims(req, claims);
+            var jwtSession = CreateSessionFromClaims(req, principal);
             var to = jwtSession.ConvertTo<AuthenticateResponse>();
             to.UserId = jwtSession.UserAuthId;
             return (to as object).InTask();
@@ -331,21 +314,13 @@ public class IdentityJwtAuthProvider<TUser,TKey> :
         if (!string.IsNullOrEmpty(token) && 
             !(req.Items.TryGetValue(Keywords.Session, out var oSession) && oSession is IAuthSession { IsAuthenticated: true }))
         {
-            List<Claim> claims;
             var user = req.GetClaimsPrincipal();
-            if (user.IsAuthenticated())
+            if (!user.IsAuthenticated())
             {
-                claims = user.Claims.ToList();
-            }
-            else
-            {
-                var principal = new JwtSecurityTokenHandler().ValidateToken(token,
+                user = new JwtSecurityTokenHandler().ValidateToken(token,
                     Options!.TokenValidationParameters, out SecurityToken validatedToken);
-
-                var jwtToken = (JwtSecurityToken)validatedToken;
-                claims = jwtToken.Claims.ToList();
             }
-            var session = CreateSessionFromClaims(req, claims);
+            var session = CreateSessionFromClaims(req, user);
             req.Items[Keywords.Session] = session;
         }
         return Task.CompletedTask;
@@ -410,8 +385,9 @@ public class IdentityJwtAuthProvider<TUser,TKey> :
         }
     }
 
-    public virtual IAuthSession CreateSessionFromClaims(IRequest req, List<Claim> claims)
+    public virtual IAuthSession CreateSessionFromClaims(IRequest req, ClaimsPrincipal principal)
     {
+        var claims = principal.Claims.ToList();
         var sessionId = claims.FirstOrDefault(x => x.Type == "jid")?.Value ?? HostContext.AppHost.CreateSessionId();
         var session = SessionFeature.CreateNewSession(req, sessionId);
 
@@ -419,9 +395,7 @@ public class IdentityJwtAuthProvider<TUser,TKey> :
         session.AuthProvider = Name;
         session.FromToken = true;
 
-        var claimMap = new List<KeyValuePair<string, string>>();
-        claims.Each(x => claimMap.Add(new(x.Type, x.Value)));
-        session.PopulateFromMap(claimMap);
+        IdentityAuth.AuthApplication.PopulateSession(req, session, principal);
 
         OnSessionCreated?.Invoke(session, claims, req);
 
@@ -770,7 +744,8 @@ public class ConvertSessionToTokenService(IIdentityJwtAuthProvider jwtAuthProvid
         if (Request.ResponseContentType.MatchesContentType(MimeTypes.Html))
             Request.ResponseContentType = MimeTypes.Json;
 
-        var httpResult = new HttpResult(new ConvertSessionToTokenResponse()); 
+        var dto = new ConvertSessionToTokenResponse();
+        var httpResult = new HttpResult(dto); 
 
         var token = Request.GetJwtToken();
         IAuthSession? session = null;
@@ -802,21 +777,29 @@ public class ConvertSessionToTokenService(IIdentityJwtAuthProvider jwtAuthProvid
             userTokens ??= new(token, null);
         }
 
-        httpResult.AddCookie(Request,
-            new Cookie(Keywords.TokenCookie, token, Cookies.RootPath) {
-                HttpOnly = true,
-                Secure = Request.IsSecureConnection,
-                Expires = DateTime.UtcNow.Add(jwtAuthProvider.ExpireTokensIn),
-            });
-        
-        if (userTokens.RefreshToken is { RefreshTokenExpiry: not null })
+        if (Request is GrpcRequest)
+        {
+            dto.AccessToken = token;
+            dto.RefreshToken = userTokens.RefreshToken?.RefreshToken;
+        }
+        else
         {
             httpResult.AddCookie(Request,
-                new Cookie(Keywords.RefreshTokenCookie, token, Cookies.RootPath) {
+                new Cookie(Keywords.TokenCookie, token, Cookies.RootPath) {
                     HttpOnly = true,
                     Secure = Request.IsSecureConnection,
-                    Expires = userTokens.RefreshToken.RefreshTokenExpiry.Value,
+                    Expires = DateTime.UtcNow.Add(jwtAuthProvider.ExpireTokensIn),
                 });
+            
+            if (userTokens.RefreshToken is { RefreshTokenExpiry: not null })
+            {
+                httpResult.AddCookie(Request,
+                    new Cookie(Keywords.RefreshTokenCookie, userTokens.RefreshToken?.RefreshToken, Cookies.RootPath) {
+                        HttpOnly = true,
+                        Secure = Request.IsSecureConnection,
+                        Expires = userTokens.RefreshToken!.RefreshTokenExpiry.Value,
+                    });
+            }
         }
         
         return httpResult;

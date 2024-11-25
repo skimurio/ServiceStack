@@ -66,8 +66,7 @@ public abstract class SoapHandler : ServiceStackHandlerBase, IOneWay, ISyncReply
         var soapFeature = requestAttributes.ToSoapFeature();
         appHost.AssertFeatures(soapFeature);
 
-        if (httpReq == null)
-            httpReq = HostContext.GetCurrentRequest();
+        httpReq ??= HostContext.GetCurrentRequest();
 
         if (httpRes == null && httpReq != null)
             httpRes = httpReq.Response;
@@ -162,7 +161,7 @@ public abstract class SoapHandler : ServiceStackHandlerBase, IOneWay, ISyncReply
                 else
                     HostContext.RaiseUncaughtException(httpReq, httpRes, httpReq.OperationName, ex).Wait();
 
-                throw new SerializationException($"Error trying to deserialize requestType: {requestType}, xml body: {requestXml}", ex);
+                throw new SerializationException($"Error trying to deserialize requestType: {requestType}", ex);
             }
             catch (Exception useEx)
             {

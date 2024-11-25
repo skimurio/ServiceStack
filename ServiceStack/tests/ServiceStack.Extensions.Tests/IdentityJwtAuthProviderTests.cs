@@ -20,6 +20,7 @@ using Microsoft.IdentityModel.Tokens;
 using NUnit.Framework;
 using ServiceStack.Auth;
 using ServiceStack.Data;
+using ServiceStack.Messaging;
 using ServiceStack.OrmLite;
 using ServiceStack.Text;
 using ServiceStack.Web;
@@ -56,6 +57,22 @@ public class Roles
     public const string Admin = nameof(Admin);
     public const string Manager = nameof(Manager);
     public const string Employee = nameof(Employee);
+}
+
+[ValidateIsAuthenticated]
+public class MqBearerToken : IHasBearerToken, IReturn<MqBearerToken>
+{
+    public int Id { get; set; }
+    public string? BearerToken { get; set; }
+}
+
+public class BackgroundAuthServices : Service
+{
+    public object Any(MqBearerToken request)
+    {
+        request.Id++;
+        return request;
+    }
 }
 
 public class IdentityJwtAuthProviderTests
@@ -143,29 +160,38 @@ public class IdentityJwtAuthProviderTests
         }, "p@55wOrd", allRoles);
     }
 
+    public static void CreateIdentityUsers(IServiceProvider services)
+    {
+        var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
+        using var scope = scopeFactory.CreateScope();
+        using var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        dbContext.Database.EnsureCreated();
+        //dbContext.Database.Migrate(); // runs migrations twice
+
+        // Only seed users if DB was just created
+        if (!dbContext.Users.Any())
+        {
+            AddSeedUsers(scope.ServiceProvider).Wait();
+        }
+    }
+
     class AppHost() : AppHostBase(nameof(IdentityJwtAuthProviderTests), typeof(AutoQueryService).Assembly)
     {
+        
         public override void Configure()
         {
             var log = ApplicationServices.GetRequiredService<ILogger<IdentityJwtAuthProviderTests>>();
             log.LogInformation("IdentityJwtAuthProviderTests.Configure()");
 
-            var scopeFactory = ApplicationServices.GetRequiredService<IServiceScopeFactory>();
-            using var scope = scopeFactory.CreateScope();
-            using var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            dbContext.Database.EnsureCreated();
-            //dbContext.Database.Migrate(); // runs migrations twice
-
-            // Only seed users if DB was just created
-            if (!dbContext.Users.Any())
-            {
-                log.LogInformation("Adding Seed Users...");
-                AddSeedUsers(scope.ServiceProvider).Wait();
-            }
+            CreateIdentityUsers(ApplicationServices);
 
             log.LogInformation("Seeding Database...");
             using var db = GetDbConnection();
             AutoQueryAppHost.SeedDatabase(db);
+
+            var mqService = Resolve<IMessageService>();
+            mqService.RegisterHandler<MqBearerToken>(ExecuteMessage);
+            mqService.Start();
         }
     }
 
@@ -245,6 +271,8 @@ public class IdentityJwtAuthProviderTests
             });
         });
 
+        services.AddSingleton<IMessageService>(c => new BackgroundMqService());
+
         var app = builder.Build();
 
         app.UseAuthorization();
@@ -275,6 +303,18 @@ public class IdentityJwtAuthProviderTests
         return jwt;
     }
     
+    private async Task<string> GetBearerTokenAsync()
+    {
+        var authClient = GetClient();
+        var response = await authClient.SendAsync(new Authenticate
+        {
+            provider = "credentials",
+            UserName = Username,
+            Password = Password,
+        });
+        return authClient.GetTokenCookie();
+    }
+
     private async Task<string> GetRefreshTokenAsync()
     {
         var authClient = GetClient();
@@ -424,6 +464,77 @@ public class IdentityJwtAuthProviderTests
 
         response = await client.SendAsync(request);
         Assert.That(response.Result, Is.EqualTo("Hello, test"));
+    }
+
+    [Test]
+    public async Task Can_authenticate_with_BearerToken_in_MQ()
+    {
+        var bearerToken = await GetBearerTokenAsync();
+
+        await ServiceStackHost.Instance.ExecuteMessageAsync(new Message<MqBearerToken>(new MqBearerToken
+        {
+            BearerToken = bearerToken,
+        }));
+    }
+
+    [Test]
+    public void Can_use_IdentityUsers_to_query_AspNetUsers()
+    {
+        using var db = ServiceStackHost.Instance.GetApplicationServices().GetRequiredService<IDbConnectionFactory>().Open();
+        string[] userNames = ["manager@email.com", "admin@email.com"];
+
+        Assert.That(db.TableExists(IdentityUsers.TableName));
+        
+        var users = IdentityUsers.GetByUserNames(db, userNames);
+        Assert.That(users.Count, Is.EqualTo(2));
+        
+        var userIds = users.Map(x => x.Id);
+        var emails = users.Map(x => x.Email!);
+        
+        Assert.That(userIds.All(x => x != null));
+        Assert.That(emails.All(x => x != null));
+
+        var user = IdentityUsers.GetByUserId(db, userIds[0]);
+        Assert.That(user!.Email!.EndsWith("@email.com"));
+
+        user = IdentityUsers.GetByEmail(db, emails[0]);
+        Assert.That(user!.Email!.EndsWith("@email.com"));
+        
+        users = IdentityUsers.GetByUserIds(db, userIds);
+        Assert.That(users.Count, Is.EqualTo(2));
+        
+        users = IdentityUsers.GetByEmails(db, emails);
+        Assert.That(users.Count, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task Can_use_IdentityUsers_to_query_AspNetUsers_Async()
+    {
+        using var db = await ServiceStackHost.Instance.GetApplicationServices().GetRequiredService<IDbConnectionFactory>().OpenAsync();
+        string[] userNames = ["manager@email.com", "admin@email.com"];
+        
+        Assert.That(await db.TableExistsAsync(IdentityUsers.TableName));
+
+        var users = await IdentityUsers.GetByUserNamesAsync(db, userNames);
+        Assert.That(users.Count, Is.EqualTo(2));
+        
+        var userIds = users.Map(x => x.Id);
+        var emails = users.Map(x => x.Email!);
+        
+        Assert.That(userIds.All(x => x != null));
+        Assert.That(emails.All(x => x != null));
+
+        var user = await IdentityUsers.GetByUserIdAsync(db, userIds[0]);
+        Assert.That(user!.Email!.EndsWith("@email.com"));
+
+        user = await IdentityUsers.GetByEmailAsync(db, emails[0]);
+        Assert.That(user!.Email!.EndsWith("@email.com"));
+        
+        users = await IdentityUsers.GetByUserIdsAsync(db, userIds);
+        Assert.That(users.Count, Is.EqualTo(2));
+        
+        users = await IdentityUsers.GetByEmailsAsync(db, emails);
+        Assert.That(users.Count, Is.EqualTo(2));
     }
 }
 

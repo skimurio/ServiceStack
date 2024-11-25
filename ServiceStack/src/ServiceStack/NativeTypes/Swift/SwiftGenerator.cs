@@ -65,6 +65,7 @@ public class SwiftGenerator : ILangGenerator
         {"QueryDb`2", "QueryDb2"},
         {"QueryData`1", "QueryData"},
         {"QueryData`2", "QueryData2"},
+        {"Object", "String"}, // Any breaks Codable contract
     }.ToConcurrentDictionary();
 
     //Use built-in types already in net.servicestack.client package
@@ -143,7 +144,7 @@ public class SwiftGenerator : ILangGenerator
         {
             sb.AppendLine("/* Options:");
             sb.AppendLine("Date: {0}".Fmt(DateTime.Now.ToString("s").Replace("T", " ")));
-            sb.AppendLine("SwiftVersion: 5.0");
+            sb.AppendLine("SwiftVersion: 6.0");
             sb.AppendLine("Version: {0}".Fmt(Env.VersionString));
             sb.AppendLine("Tip: {0}".Fmt(HelpMessages.NativeTypesDtoOptionsTip.Fmt("//")));
             sb.AppendLine("BaseUrl: {0}".Fmt(Config.BaseUrl));
@@ -155,6 +156,7 @@ public class SwiftGenerator : ILangGenerator
             sb.AppendLine("{0}BaseClass: {1}".Fmt(defaultValue("BaseClass"), Config.BaseClass));
             sb.AppendLine("{0}AddModelExtensions: {1}".Fmt(defaultValue("AddModelExtensions"), Config.AddModelExtensions));
             sb.AppendLine("{0}AddServiceStackTypes: {1}".Fmt(defaultValue("AddServiceStackTypes"), Config.AddServiceStackTypes));
+            sb.AppendLine("{0}MakePropertiesOptional: {1}".Fmt(defaultValue("MakePropertiesOptional"), Config.MakePropertiesOptional));
             sb.AppendLine("{0}IncludeTypes: {1}".Fmt(defaultValue("IncludeTypes"), Config.IncludeTypes.Safe().ToArray().Join(",")));
             sb.AppendLine("{0}ExcludeTypes: {1}".Fmt(defaultValue("ExcludeTypes"), Config.ExcludeTypes.Safe().ToArray().Join(",")));
             sb.AppendLine("{0}ExcludeGenericBaseTypes: {1}".Fmt(defaultValue("ExcludeGenericBaseTypes"), Config.ExcludeGenericBaseTypes));
@@ -314,7 +316,7 @@ public class SwiftGenerator : ILangGenerator
             AppendAttributes(sb, options.Routes.ConvertAll(x => x.ToMetadataAttribute()));
         }
         AppendAttributes(sb, type.Attributes);
-        AppendDataContract(sb, type.DataContract);
+        if (type.IsInterface != true) AppendDataContract(sb, type.DataContract);
 
         sb.Emit(type, Lang.Swift);
         PreTypeFilter?.Invoke(sb, type);
@@ -420,9 +422,8 @@ public class SwiftGenerator : ILangGenerator
 
             var typeProps = type.Properties ?? TypeConstants<MetadataPropertyType>.EmptyList;
             AddProperties(sb, type,
-                initCollections: !type.IsInterface() && Config.InitializeCollections && feature.ShouldInitializeCollection(type),
-                includeResponseStatus: Config.AddResponseStatus && options.IsResponse
-                                                                && typeProps.All(x => x.Name != nameof(ResponseStatus)));
+                includeResponseStatus: Config.AddResponseStatus && options.IsResponse && 
+                                       typeProps.All(x => x.Name != nameof(ResponseStatus)));
 
             if (typeProps.Count > 0)
                 sb.AppendLine();
@@ -475,10 +476,10 @@ public class SwiftGenerator : ILangGenerator
                         var defaultValue = prop.IsArray()
                             ? " ?? []"
                             : !type.IsInterface() && !prop.GenericArgs.IsEmpty()
-                                ? ArrayTypes.Contains(prop.Type)
-                                    ? " ?? []"
-                                    : DictionaryTypes.Contains(prop.Type)
-                                        ? " ?? [:]"
+                                ? ServiceMetadata.AnyDictionaryTypes.Contains(prop.Type)
+                                    ? " ?? [:]"
+                                    : ServiceMetadata.AnyCollectionTypes.Contains(prop.Type)
+                                        ? " ?? []"
                                         : ""
                                 : "";
                         var method = converter?.DecodeMethod ?? "decodeIfPresent";
@@ -506,10 +507,18 @@ public class SwiftGenerator : ILangGenerator
                             : null;
                             
                         var propName = GetPropertyName(prop);
-                        var isCollection = prop.IsArray() || ArrayTypes.Contains(prop.Type) || DictionaryTypes.Contains(prop.Type);
+                        var initProp = (prop.IsRequired == true || Config.InitializeCollections) 
+                                       && prop.IsEnumerable() && feature.ShouldInitializeCollection(type) && !prop.IsInterface();
                         var method = converter?.EncodeMethod ?? "encode";
-                        sb.AppendLine(isCollection
-                            ? $"if {propName}.count > 0 {{ try container.{method}({propName}, forKey: .{propName}) }}"
+                        
+                        var (optional, defaultValue) = GetPropInfo(prop, initProp);
+                        if (propTypeName.EndsWith("?"))
+                            optional = "?";
+                        
+                        sb.AppendLine(initProp
+                            ? (optional == "?"
+                                ? $"if {propName} != nil && {propName}!.count > 0 "
+                                : $"if {propName}.count > 0 ") + ('{' + $" try container.{method}({propName}, forKey: .{propName}) " + '}')
                             : $"if {propName} != nil {{ try container.{method}({propName}, forKey: .{propName}) }}");
                     }
                 }
@@ -571,55 +580,43 @@ public class SwiftGenerator : ILangGenerator
         return to;
     }
 
-    public void AddProperties(StringBuilderWrapper sb, MetadataType type,
-        bool initCollections, bool includeResponseStatus)
+    public void AddProperties(StringBuilderWrapper sb, MetadataType type, bool includeResponseStatus)
     {
         var wasAdded = false;
 
+        var allBaseProps = new HashSet<string>();
+        if (type.Type != null)
+        {
+            var baseType = type.Type.BaseType;
+            while (baseType != null && baseType != typeof(object))
+            {
+                foreach (var prop in baseType.GetProperties())
+                {
+                    allBaseProps.Add(prop.Name);
+                }
+                baseType = baseType.BaseType;
+            }
+        }
+        
         var dataMemberIndex = 1;
         foreach (var prop in type.Properties.Safe())
         {
+            if (allBaseProps.Contains(prop.Name)) continue;
             if (wasAdded) sb.AppendLine();
 
             var propTypeName = GetPropertyType(prop);
             propTypeName = PropertyTypeFilter?.Invoke(this, type, prop) ?? propTypeName;
 
             var propType = FindType(prop.Type, prop.Namespace, prop.GenericArgs);
-                    
-            var optional = "";
-            var defaultValue = "";
+
+            var initProp = (prop.IsRequired == true || Config.InitializeCollections) 
+                           && prop.IsEnumerable() && feature.ShouldInitializeCollection(type) && !prop.IsInterface();
+
+            var (optional, defaultValue) = GetPropInfo(prop, initProp);
             if (propTypeName.EndsWith("?"))
             {
                 propTypeName = propTypeName.Substring(0, propTypeName.Length - 1);
                 optional = "?";
-            }
-            if (Config.MakePropertiesOptional)
-            {
-                optional = "?";
-            }
-
-            if (prop.Attributes.Safe().FirstOrDefault(x => x.Name == "Required") != null)
-            {
-                optional = "?"; //always use optional
-            }
-
-            if (prop.IsArray())
-            {
-                optional = "";
-                defaultValue = " = []";
-            }
-            else if (initCollections && !prop.GenericArgs.IsEmpty())
-            {
-                if (ArrayTypes.Contains(prop.Type))
-                {
-                    optional = "";
-                    defaultValue = " = []";
-                }
-                if (DictionaryTypes.Contains(prop.Type))
-                {
-                    optional = "";
-                    defaultValue = " = [:]";
-                }
             }
 
             if (propType.IsInterface() || IgnorePropertyNames.Contains(prop.Name))
@@ -667,6 +664,43 @@ public class SwiftGenerator : ILangGenerator
             AppendDataMember(sb, null, dataMemberIndex++);
             sb.AppendLine("public var {0}:ResponseStatus?".Fmt(GetPropertyName(nameof(ResponseStatus))));
         }
+    }
+    
+    (string optional, string defaultValue) GetPropInfo(MetadataPropertyType prop, bool initCollections)
+    {
+        string optional = "";
+        string defaultValue = "";
+        if (Config.MakePropertiesOptional)
+        {
+            optional = "?";
+        }
+        if (prop.Attributes.Safe().FirstOrDefault(x => x.Name == "Required") != null)
+        {
+            optional = "?"; //always use optional
+        }
+
+        if (initCollections)
+        {
+            if (prop.IsArray())
+            {
+                optional = "";
+                defaultValue = " = []";
+            }
+            else if (!prop.GenericArgs.IsEmpty())
+            {
+                if (ServiceMetadata.AnyDictionaryTypes.Contains(prop.Type))
+                {
+                    optional = "";
+                    defaultValue = " = [:]";
+                }
+                else if (ServiceMetadata.AnyCollectionTypes.Contains(prop.Type))
+                {
+                    optional = "";
+                    defaultValue = " = []";
+                }
+            }
+        }
+        return (optional, defaultValue);
     }
 
     public virtual string GetPropertyType(MetadataPropertyType prop)
@@ -797,26 +831,6 @@ public class SwiftGenerator : ILangGenerator
         return null;
     }
 
-    public static HashSet<string> ArrayTypes = new() {
-        "List`1",
-        "IEnumerable`1",
-        "ICollection`1",
-        "HashSet`1",
-        "Queue`1",
-        "Stack`1",
-        "IEnumerable",
-    };
-
-    public static HashSet<string> DictionaryTypes = new() {
-        "Dictionary`2",
-        "IDictionary`2",
-        "IOrderedDictionary`2",
-        "OrderedDictionary",
-        "StringDictionary",
-        "IDictionary",
-        "IOrderedDictionary",
-    };
-
     public static HashSet<string> IgnorePropertyTypeNames = new() {
         "Object",
     };
@@ -847,12 +861,14 @@ public class SwiftGenerator : ILangGenerator
                 return "{0}?".Fmt(TypeAlias(GenericArg(genericArgs[0])));
             if (type == "Nullable`1[]")
                 return $"[{GenericArg(genericArgs[0])}?]";
-            if (ArrayTypes.Contains(type))
-                return "[{0}]".Fmt(TypeAlias(GenericArg(genericArgs[0]))).StripNullable();
-            if (DictionaryTypes.Contains(type))
+            if (ServiceMetadata.AnyDictionaryTypes.Contains(type))
                 return "[{0}:{1}]".Fmt(
                     TypeAlias(GenericArg(genericArgs[0])),
                     TypeAlias(GenericArg(genericArgs[1])));
+            if (ServiceMetadata.AnyCollectionTypes.Contains(type))
+                return "[{0}]".Fmt(TypeAlias(GenericArg(genericArgs[0]))).StripNullable();
+            if (type.EndsWith("[]"))
+                return $"[{Type(type.Substring(0,type.Length-2), genericArgs)}]".StripNullable();
 
             var parts = type.Split('`');
             if (parts.Length > 1)
@@ -869,6 +885,10 @@ public class SwiftGenerator : ILangGenerator
                 var typeName = TypeAlias(type);
                 return "{0}<{1}>".Fmt(typeName, StringBuilderCacheAlt.ReturnAndFree(args));
             }
+        }
+        else if (ServiceMetadata.AnyDictionaryTypes.Contains(type))
+        {
+            return "[String:String]?";
         }
         else
         {

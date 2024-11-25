@@ -198,6 +198,7 @@ namespace ServiceStack.OrmLite
         }
         
         public virtual bool SupportsSchema => true;
+        public virtual bool SupportsConcurrentWrites => true;
 
         public string DefaultValueFormat = " DEFAULT ({0})";
 
@@ -1193,13 +1194,13 @@ namespace ServiceStack.OrmLite
                     }
 
                     if (fieldDef == null)
-                        throw new ArgumentException($"Field Definition '{fieldName}' was not found");
+                        throw new ArgumentException("Field Definition was not found", fieldName);
                 }
 
                 if (fieldDef.AutoId && p.Value != null)
                 {
                     var existingId = fieldDef.GetValue(obj);
-                    if (existingId is Guid existingGuid && existingGuid != default(Guid))
+                    if (existingId is Guid existingGuid && existingGuid != default)
                     {
                         p.Value = existingGuid; // Use existing value if not default
                     }
@@ -1828,6 +1829,8 @@ namespace ServiceStack.OrmLite
         public virtual string ToDropForeignKeyStatement(string schema, string table, string foreignKeyName) =>
             $"ALTER TABLE {GetQuotedTableName(table, schema)} DROP CONSTRAINT {GetQuotedName(foreignKeyName)};";
 
+        public virtual string ToDropConstraintStatement(string schema, string table, string constraintName) => null;
+
         public virtual string ToCreateIndexStatement<T>(Expression<Func<T, object>> field, string indexName = null, bool unique = false)
         {
             var sourceDef = ModelDefinition<T>.Definition;
@@ -1934,6 +1937,7 @@ namespace ServiceStack.OrmLite
 
         //Async API's, should be overriden by Dialect Providers to use .ConfigureAwait(false)
         //Default impl below uses TaskAwaiter shim in async.cs
+        public virtual bool SupportsAsync => false;
 
         public virtual Task OpenAsync(IDbConnection db, CancellationToken token = default)
         {
@@ -1961,7 +1965,6 @@ namespace ServiceStack.OrmLite
             return reader.Read().InTask();
         }
 
-#if ASYNC
         public virtual async Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token = default)
         {
             try
@@ -2021,26 +2024,5 @@ namespace ServiceStack.OrmLite
 
             return dbCmd.ExecLongScalarAsync(null, token);
         }
-#else
-        public Task<List<T>> ReaderEach<T>(IDataReader reader, Func<T> fn, CancellationToken token = new CancellationToken())
-        {
-            throw new NotImplementedException(OrmLiteUtils.AsyncRequiresNet45Error);
-        }
-
-        public Task<Return> ReaderEach<Return>(IDataReader reader, Action fn, Return source, CancellationToken token = new CancellationToken())
-        {
-            throw new NotImplementedException(OrmLiteUtils.AsyncRequiresNet45Error);
-        }
-
-        public Task<T> ReaderRead<T>(IDataReader reader, Func<T> fn, CancellationToken token = new CancellationToken())
-        {
-            throw new NotImplementedException(OrmLiteUtils.AsyncRequiresNet45Error);
-        }
-
-        public Task<long> InsertAndGetLastInsertIdAsync<T>(IDbCommand dbCmd, CancellationToken token)
-        {
-            throw new NotImplementedException(OrmLiteUtils.AsyncRequiresNet45Error);
-        }
-#endif
     }
 }

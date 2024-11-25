@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
@@ -37,7 +38,7 @@ public class MetadataTypesConfig
         bool addNullableAnnotations = false,
         bool makePropertiesOptional = false,
         bool makeDataContractsExtensible = false,
-        bool initializeCollections = true,
+        bool initializeCollections = false,
         int? addImplicitVersion = null)
     {
         BaseUrl = baseUrl;
@@ -115,17 +116,10 @@ public class MetadataTypesConfig
 [Exclude(Feature.Soap | Feature.ApiExplorer)]
 public class MetadataTypes
 {
-    public MetadataTypes()
-    {
-        Types = new List<MetadataType>();
-        Operations = new List<MetadataOperationType>();
-        Namespaces = new List<string>();
-    }
-
     public MetadataTypesConfig Config { get; set; }
-    public List<string> Namespaces { get; set; }
-    public List<MetadataType> Types { get; set; }
-    public List<MetadataOperationType> Operations { get; set; }
+    public List<string> Namespaces { get; set; } = [];
+    public List<MetadataType> Types { get; set; } = [];
+    public List<MetadataOperationType> Operations { get; set; } = [];
 }
 
 [Exclude(Feature.Soap | Feature.ApiExplorer)]
@@ -158,6 +152,8 @@ public class PluginInfo : IMeta
 {
     public List<string> Loaded { get; set; }
     public AuthInfo Auth { get; set; }
+    public ApiKeyInfo ApiKey { get; set; }
+    public CommandsInfo Commands { get; set; }
     public AutoQueryInfo AutoQuery { get; set; }
     public ValidationInfo Validation { get; set; }
     public SharpPagesInfo SharpPages { get; set; }
@@ -302,9 +298,7 @@ public class SharpPagesInfo : IMeta
 public class RequestLogsInfo : IMeta
 {
     public string AccessRole { get; set; }
-    [Obsolete("Use AccessRole")]
-    public string[] RequiredRoles { get; set; }
-    public string RequestLogger { get; set; }
+     public string RequestLogger { get; set; }
     public int DefaultLimit { get; set; }
     public Dictionary<string,string[]> ServiceRoutes { get; set; }
     public Dictionary<string, string> Meta { get; set; }
@@ -417,6 +411,36 @@ public class SchemaInfo
     public string Alias { get; set; }
     public string Name { get; set; }
     public List<string> Tables { get; set; }
+}
+
+[Exclude(Feature.Soap | Feature.ApiExplorer)]
+public class ApiKeyInfo : IMeta
+{
+    public string Label { get; set; }
+    public string HttpHeader { get; set; }
+    public List<string> Scopes { get; set; }
+    public List<string> Features { get; set; }
+    public List<string> RequestTypes { get; set; }
+    public List<KeyValuePair<string, string>> ExpiresIn { get; set; }
+    public List<string> Hide { get; set; }
+    public Dictionary<string, string> Meta { get; set; }
+}
+
+[Exclude(Feature.Soap | Feature.ApiExplorer)]
+public class CommandsInfo : IMeta
+{
+    public List<CommandInfo> Commands { get; set; } = new();
+    public Dictionary<string, string> Meta { get; set; }
+}
+
+public class CommandInfo
+{
+    [IgnoreDataMember]
+    public Type Type { get; set; }
+    public string Name { get; set; }
+    public string Tag { get; set; }
+    public MetadataType Request { get; set; }
+    public MetadataType Response { get; set; }
 }
 
 [Exclude(Feature.Soap | Feature.ApiExplorer)]
@@ -740,6 +764,7 @@ public class MetadataOperationType
     public MetadataTypeName DataModel { get; set; }
     public MetadataTypeName ViewModel { get; set; }
     public bool? RequiresAuth { get; set; }
+    public bool? RequiresApiKey { get; set; }
     public List<string> RequiredRoles { get; set; }
     public List<string> RequiresAnyRole { get; set; }
     public List<string> RequiredPermissions { get; set; }
@@ -1439,6 +1464,8 @@ public static class AppMetadataUtils
 
     public static MetadataType ToMetadataType(this Type type)
     {
+        if (type == null)
+            return null;
         var ret = new MetadataType
         {
             Type = type,
@@ -1496,29 +1523,24 @@ public static class AppMetadataUtils
 
     public static List<MetadataPropertyType> GetAllProperties(this AppMetadata api, MetadataType metaType)
     {
-        //var metaType = api.GetType(forType);
         var to = new List<MetadataPropertyType>();
 
         while (metaType != null)
         {
             foreach (var prop in metaType.Properties.OrEmpty())
             {
-                if (to.Any(x => x.Name == prop.Name))
+                if (to.All(x => x.Name != prop.Name))
                     to.Add(prop);
             }
-            if (metaType.Inherits != null)
-            {
-                metaType = api.GetType(metaType.Inherits);
-            }
+            metaType = metaType.Inherits != null ? api.GetType(metaType.Inherits) : null;
         }
 
         return to;
     }
 
-
     public static PropertyInfo[] GetInstancePublicProperties(this Type type)
     {
-        return type.GetProperties(BindingFlags.Public | BindingFlags.Instance )
+        return type.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .OnlySerializableProperties(type)
             .Where(t =>
                 t.GetIndexParameters().Length == 0 && // ignore indexed properties
@@ -1811,6 +1833,12 @@ public static class AppMetadataUtils
             property.Format ??= new FormatInfo { Method = apiMember.Format };
             property.Description = apiMember.Description;
         }
+        
+#if NET6_0_OR_GREATER        
+        var nullableProp = pi.FirstAttribute<AllowNullAttribute>();
+        if (nullableProp != null)
+            property.IsRequired = false;
+#endif
 
         var requiredProp = pi.FirstAttribute<RequiredAttribute>();
         if (requiredProp != null)

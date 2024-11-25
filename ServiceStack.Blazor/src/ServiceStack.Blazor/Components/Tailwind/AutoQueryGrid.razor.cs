@@ -63,6 +63,8 @@ public partial class AutoQueryGrid<Model> : AuthBlazorComponentBase, IDisposable
     [Parameter] public string TableHeaderRowClass { get; set; } = CssDefaults.Grid.GetTableHeaderRowClass(BlazorConfig.Instance.AutoQueryGridDefaults.TableStyle);
     [Parameter] public string TableHeaderCellClass { get; set; } = CssDefaults.Grid.GetTableHeaderCellClass(BlazorConfig.Instance.AutoQueryGridDefaults.TableStyle);
     [Parameter] public string TableBodyClass { get; set; } = CssDefaults.Grid.GetTableBodyClass(BlazorConfig.Instance.AutoQueryGridDefaults.TableStyle);
+    [Parameter] public string ModelTitle { get; set; } = TextUtils.Humanize(typeof(Model));
+    [Parameter] public string NewButtonLabel { get; set; } = $"New {TextUtils.Humanize(typeof(Model))}";
 
 
     [Parameter] public List<Model> Items { get; set; } = new();
@@ -153,8 +155,7 @@ public partial class AutoQueryGrid<Model> : AuthBlazorComponentBase, IDisposable
 
     int filtersCount => GetColumns().Select(x => x.Settings.Filters.Count).Sum();
 
-    List<MetadataPropertyType> Properties => appMetadataApi.Response?.Api.Types
-        .FirstOrDefault(x => x.Name == typeof(Model).Name)?.Properties ?? new();
+    List<MetadataPropertyType> Properties => appMetadataApi.Response?.GetAllProperties(typeof(Model).Name) ?? [];
     List<MetadataPropertyType> ViewModelColumns => Properties.Where(x => GetColumns().Any(c => c.Name == x.Name)).ToList();
 
     Column<Model>? Filter { get; set; }

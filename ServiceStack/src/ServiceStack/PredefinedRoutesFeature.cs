@@ -88,8 +88,7 @@ public class PredefinedRoutesFeature : IPlugin, IAfterInitAppHost, Model.IHasStr
 
     public void Register(IAppHost appHost)
     {
-        if ((appHost.PathBase == null || !appHost.PathBase.Contains("api")) 
-            && JsonApiRoute != null && !appHost.VirtualFileSources.DirectoryExists("api"))
+        if ((appHost.PathBase == null || !appHost.PathBase.Contains("api")) && JsonApiRoute != null)
         {
             appHost.RawHttpHandlers.Add(ApiHandlers.Json(JsonApiRoute));
             appHost.AddToAppMetadata(metadata => metadata.HttpHandlers["ApiHandlers.Json"] = JsonApiRoute);
@@ -107,7 +106,7 @@ public class PredefinedRoutesFeature : IPlugin, IAfterInitAppHost, Model.IHasStr
         if (JsonApiRoute != null)
         {
 #if NET8_0_OR_GREATER
-            var host = (IAppHostNetCore)appHost;
+            var host = appHost as IAppHostNetCore; 
             host.MapEndpoints(routeBuilder =>
             {
                 var apiPath = ApiHandlers.GetBaseApiPath(JsonApiRoute);
@@ -122,6 +121,8 @@ public class PredefinedRoutesFeature : IPlugin, IAfterInitAppHost, Model.IHasStr
                         })
                         .WithMetadata<Dictionary<string, List<ApiDescription>>>();
                 }
+
+                var options = host.CreateEndpointOptions();
                 
                 // Map /api/{Request} routes
                 var apis = routeBuilder.MapGroup(apiPath);
@@ -136,7 +137,7 @@ public class PredefinedRoutesFeature : IPlugin, IAfterInitAppHost, Model.IHasStr
                     var builder = apis.MapMethods("/" + requestType.Name, verb, (HttpResponse response, HttpContext httpContext) => 
                         httpContext.ProcessRequestAsync(ApiHandlers.JsonEndpointHandler(apiPath, httpContext.Request.Path), apiName:requestType.Name));
 
-                    host.ConfigureOperationEndpoint(builder, operation);
+                    host.ConfigureOperationEndpoint(builder, operation, options);
                     
                     foreach (var handler in host.Options.RouteHandlerBuilders)
                     {

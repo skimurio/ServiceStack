@@ -39,6 +39,7 @@ public class KotlinGenerator : ILangGenerator
 
         "java.math.*",
         "java.util.*",
+        "java.io.InputStream",
         "net.servicestack.client.*",
     };
 
@@ -120,6 +121,11 @@ public class KotlinGenerator : ILangGenerator
     /// Emit code without Header Options
     /// </summary>
     public bool WithoutOptions { get; set; }
+
+    public static List<Type> IgnoreInterfaces { get; set; } =
+    [
+        typeof(IHasResponseStatus),
+    ]; 
 
     public string GetCode(MetadataTypes metadata, IRequest request, INativeTypesMetadata nativeTypes)
     {
@@ -333,7 +339,7 @@ public class KotlinGenerator : ILangGenerator
             AppendAttributes(sb, options.Routes.ConvertAll(x => x.ToMetadataAttribute()));
         }
         AppendAttributes(sb, type.Attributes);
-        AppendDataContract(sb, type.DataContract);
+        if (type.IsInterface != true) AppendDataContract(sb, type.DataContract);
 
         var typeName = Type(type.Name, type.GenericArgs);
 
@@ -348,7 +354,6 @@ public class KotlinGenerator : ILangGenerator
             sb.AppendLine($"enum class {typeName}{enumConstructor}");
             sb.AppendLine("{");
             sb = sb.Indent();
-
 
             if (type.EnumNames != null)
             {
@@ -382,12 +387,17 @@ public class KotlinGenerator : ILangGenerator
         {
             var defType = type.IsInterface()
                 ? "interface"
-                : "class";
+                : "open class";
             var extends = new List<string>();
+            var extendTypes = new List<Type>();
 
             //: BaseClass, Interfaces
             if (type.Inherits != null)
+            {
                 extends.Add(Type(type.Inherits).InheritedType());
+                if (type.Type.BaseType != null)
+                    extendTypes.Add(type.Type.BaseType);
+            }
 
             string responseTypeExpression = null;
 
@@ -411,7 +421,15 @@ public class KotlinGenerator : ILangGenerator
                     }
                 }
             }
-            type.Implements.Each(x => interfaces.Add(Type(x)));
+
+            foreach (var x in type.Implements)
+            {
+                interfaces.Add(Type(x));
+                if (x.Type != null)
+                {
+                    extendTypes.Add(x.Type);
+                }
+            }
 
             var extend = extends.Count > 0 
                 ? " : " + extends[0] + "()"
@@ -420,7 +438,7 @@ public class KotlinGenerator : ILangGenerator
             if (interfaces.Count > 0)
                 extend += (extend.IsNullOrEmpty() ? " : " : ", ") + string.Join(", ", interfaces.ToArray());
 
-            sb.AppendLine($"open {defType} {typeName}{extend}");
+            sb.AppendLine($"{defType} {typeName}{extend}");
             sb.AppendLine("{");
 
             sb = sb.Indent();
@@ -433,9 +451,10 @@ public class KotlinGenerator : ILangGenerator
             }
 
             AddProperties(sb, type,
-                initCollections: !type.IsInterface() && Config.InitializeCollections && feature.ShouldInitializeCollection(type),
-                includeResponseStatus: Config.AddResponseStatus && options.IsResponse
-                                                                && type.Properties.Safe().All(x => x.Name != nameof(ResponseStatus)));
+                includeResponseStatus: Config.AddResponseStatus && 
+                                       options.IsResponse && 
+                                       type.Properties.Safe().All(x => x.Name != nameof(ResponseStatus)), 
+                extendTypes);
 
             if (responseTypeExpression != null)
             {
@@ -453,7 +472,7 @@ public class KotlinGenerator : ILangGenerator
     }
 
     public void AddProperties(StringBuilderWrapper sb, MetadataType type,
-        bool initCollections, bool includeResponseStatus)
+        bool includeResponseStatus, List<Type> extendTypes)
     {
         var wasAdded = false;
 
@@ -462,6 +481,33 @@ public class KotlinGenerator : ILangGenerator
         var dataMemberIndex = 1;
         if (type.Properties != null)
         {
+            var allBaseProps = new HashSet<string>();
+            if (type.Type != null)
+            {
+                // Ignore built-in Interfaces in ServiceStack.Java which do not contain properties
+                var ifaces = type.Type.GetInterfaces()
+                    .Where(x => extendTypes.Contains(x) && x.Namespace?.StartsWith("ServiceStack") != true);
+                foreach (var iface in ifaces)
+                {
+                    foreach (var prop in iface.GetProperties())
+                    { 
+                        allBaseProps.Add(prop.Name);
+                    }
+                }
+                var baseType = type.Type.BaseType;
+                while (baseType != null && baseType != typeof(object))
+                {
+                    if (extendTypes.Contains(baseType))
+                    {
+                        foreach (var prop in baseType.GetProperties())
+                        {
+                            allBaseProps.Add(prop.Name);
+                        }
+                    }
+                    baseType = baseType.BaseType;
+                }
+            }
+            
             foreach (var prop in type.Properties)
             {
                 if (wasAdded) sb.AppendLine();
@@ -473,25 +519,37 @@ public class KotlinGenerator : ILangGenerator
                 wasAdded = AppendDataMember(sb, prop.DataMember, dataMemberIndex++) || wasAdded;
                 wasAdded = AppendAttributes(sb, prop.Attributes) || wasAdded;
 
-                var initProp = initCollections && !prop.GenericArgs.IsEmpty() &&
-                               (ArrayTypes.Contains(prop.Type) || DictionaryTypes.Contains(prop.Type));
+                var initProp = (prop.IsRequired == true || Config.InitializeCollections) 
+                    && prop.IsEnumerable() && feature.ShouldInitializeCollection(type) && !prop.IsInterface();
+                var initializer = initProp 
+                    ? propType == "ByteArray"
+                        ? "ByteArray(0)"
+                        : propType.EndsWith("[]")
+                            ? $"{propType}{{}}"
+                            : $"{propType}()"
+                    : "null";
 
                 sb.Emit(prop, Lang.Kotlin);
                 PrePropertyFilter?.Invoke(sb, prop, type);
 
                 var defaultName = prop.Name.PropertyStyle();
                 var fieldName = GetPropertyName(prop.Name);
-                if (fieldName == defaultName)
+                var overrides = allBaseProps.Contains(prop.Name) 
+                    ? "override " 
+                    : type.IsInterface() 
+                        ? "" 
+                        : "open ";
+                if (fieldName == defaultName || prop.DataMember?.Name != null)
                 {
                     sb.AppendLine(!initProp
-                        ? $"var {fieldName}:{propType}?{defaultValue}"
-                        : $"var {fieldName}:{propType} = {propType}()");
+                        ? $"{overrides}var {fieldName}:{propType}?{defaultValue}"
+                        : $"{overrides}var {fieldName}:{propType} = {initializer}");
                 }
                 else
                 {
                     sb.AppendLine(!initProp
-                        ? $"@SerializedName(\"{defaultName}\") var {fieldName}:{propType}?{defaultValue}"
-                        : $"@SerializedName(\"{defaultName}\") var {fieldName}:{propType} = {propType}()");
+                        ? $"@SerializedName(\"{defaultName}\") {overrides}var {fieldName}:{propType}?{defaultValue}"
+                        : $"@SerializedName(\"{defaultName}\") {overrides}var {fieldName}:{propType} = {initializer}");
                 }
                 PostPropertyFilter?.Invoke(sb, prop, type);
             }
@@ -536,6 +594,8 @@ public class KotlinGenerator : ILangGenerator
                 var args = StringBuilderCacheAlt.Allocate();
                 if (attr.ConstructorArgs != null)
                 {
+                    var props = attr.Attribute?.GetType().GetProperties() ?? [];
+
                     if (attr.ConstructorArgs.Count > 1)
                         prefix = "// ";
 
@@ -543,7 +603,8 @@ public class KotlinGenerator : ILangGenerator
                     {
                         if (args.Length > 0)
                             args.Append(", ");
-                        args.Append(TypeValue(ctorArg.Type, ctorArg.Value));
+                        var prop = props.FirstOrDefault(x => string.Equals(x.Name, ctorArg.Name, StringComparison.OrdinalIgnoreCase));
+                        args.Append($"{prop?.Name ?? ctorArg.Name}={TypeValue(ctorArg.Type, ctorArg.Value)}");
                     }
                 }
                 else if (attr.Args != null)
@@ -573,7 +634,7 @@ public class KotlinGenerator : ILangGenerator
         if (value.IsTypeValue())
         {
             //Only emit type as Namespaces are merged
-            return value.ExtractTypeName() + ".class";
+            return value.ExtractTypeName() + "::class";
         }
 
         return value;
@@ -583,26 +644,6 @@ public class KotlinGenerator : ILangGenerator
     {
         return Type(typeName.Name, typeName.GenericArgs);
     }
-
-    public static HashSet<string> ArrayTypes = new() {
-        "List`1",
-        "IEnumerable`1",
-        "ICollection`1",
-        "HashSet`1",
-        "Queue`1",
-        "Stack`1",
-        "IEnumerable",
-    };
-
-    public static HashSet<string> DictionaryTypes = new() {
-        "Dictionary`2",
-        "IDictionary`2",
-        "IOrderedDictionary`2",
-        "OrderedDictionary",
-        "StringDictionary",
-        "IDictionary",
-        "IOrderedDictionary",
-    };
 
     public string Type(string type, string[] genericArgs)
     {
@@ -616,9 +657,11 @@ public class KotlinGenerator : ILangGenerator
                 return /*@Nullable*/ GenericArg(genericArgs[0]);
             if (type == "Nullable`1[]")
                 return $"ArrayList<{GenericArg(genericArgs[0])}>";
-            if (ArrayTypes.Contains(type))
+            if (ServiceMetadata.AnyCollectionTypes.Contains(type))
                 return $"ArrayList<{GenericArg(genericArgs[0])}>".StripNullable();
-            if (DictionaryTypes.Contains(type))
+            if (type.EndsWith("[]"))
+                return $"ArrayList<{Type(type.Substring(0,type.Length-2), genericArgs)}>".StripNullable();
+            if (ServiceMetadata.AnyDictionaryTypes.Contains(type))
                 return $"HashMap<{GenericArg(genericArgs[0])},{GenericArg(genericArgs[1])}>";
 
             var parts = type.Split('`');
@@ -636,6 +679,10 @@ public class KotlinGenerator : ILangGenerator
                 var typeName = TypeAlias(type);
                 return $"{typeName}<{StringBuilderCacheAlt.ReturnAndFree(args)}>";
             }
+        }
+        else if (ServiceMetadata.AnyDictionaryTypes.Contains(type))
+        {
+            return "HashMap<String,Object>";
         }
         else
         {
@@ -952,20 +999,19 @@ public static class KotlinGeneratorExtensions
             return new MetadataAttribute
             {
                 Name = "Route",
-                Args = new List<MetadataPropertyType> {
+                Args = [
                     new() { Name = "Path", Type = "string", Value = route.Path },
-                    new() { Name = "Verbs", Type = "string", Value = route.Verbs },
-                },
+                    new() { Name = "Verbs", Type = "string", Value = route.Verbs }
+                ],
             };
         }
 
         return new MetadataAttribute
         {
             Name = "Route",
-            ConstructorArgs = new List<MetadataPropertyType>
-            {
-                new() { Type = "string", Value = route.Path },
-            },
+            ConstructorArgs = [
+                new() { Name = "Path", Type = "string", Value = route.Path }
+            ],
         };
     }
 

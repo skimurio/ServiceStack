@@ -138,7 +138,7 @@ public class FSharpGenerator : ILangGenerator
             .Select(x => x.Response).ToSet();
         var types = metadata.Types.ToSet();
 
-        allTypes = new List<MetadataType>();
+        allTypes = [];
         allTypes.AddRange(types);
         allTypes.AddRange(responseTypes);
         allTypes.AddRange(requestTypes);
@@ -245,7 +245,7 @@ public class FSharpGenerator : ILangGenerator
             AppendAttributes(sb, options.Routes.ConvertAll(x => x.ToMetadataAttribute()));
         }
         AppendAttributes(sb, type.Attributes);
-        AppendDataContract(sb, type.DataContract);
+        if (type.IsInterface != true) AppendDataContract(sb, type.DataContract);
         if (Config.AddGeneratedCodeAttributes)
         {
             sb.AppendLine($"[<GeneratedCode(\"AddServiceStackReference\", \"{Env.VersionString}\")>]");
@@ -404,7 +404,7 @@ public class FSharpGenerator : ILangGenerator
     {
         var propType = Type(prop.GetTypeName(Config, allTypes), prop.GenericArgs);
 
-        if (Config.InitializeCollections && prop.IsCollection() && feature.ShouldInitializeCollection(type))
+        if (Config.InitializeCollections && prop.IsEnumerable() && feature.ShouldInitializeCollection(type))
         {
             return prop.IsArray()
                 ? "[||]" 

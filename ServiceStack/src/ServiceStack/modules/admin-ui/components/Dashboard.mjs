@@ -177,14 +177,24 @@ export const Dashboard = {
         const urlApiExplorer = computed(() => urlWithState('../ui'))
         const loading = ref(false)
         
-        const adminFeatures = computed(() => ({ validation:'Validation', users:'Users', logging:'Logging', profiling:'Profiling', database:'Database', redis:'Redis' }))
+        const adminFeatures = computed(() => ({ 
+            validation:'Validation', 
+            users:'Users', 
+            logging:'Logging', 
+            profiling:'Profiling', 
+            database:'Database', 
+            redis:'Redis',
+            apikeys:'API Keys',
+            commands:'Commands',
+            backgroundjobs:'Background Jobs',
+        }))
         
         function isRegistered(id) {
             return server.ui.adminLinks.some(link => link.id === id)
         }
         const client = useClient()
         const api = ref(new ApiResult())
-        async function updated() {
+        async function updated(){
             api.value = await client.api(new AdminDashboard(), { jsconfig: 'eccn' })
         }
         const serverStats = computed(() => api.value.response?.serverStats || {})

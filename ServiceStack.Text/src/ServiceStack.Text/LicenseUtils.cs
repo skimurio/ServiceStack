@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -82,6 +83,7 @@ public enum QuotaType
     RequestsPerHour, //Redis
     Tables,          //OrmLite, Aws
     PremiumFeature,  //AdminUI, Advanced Redis APIs, etc
+    Commands,        //Jobs
 }
 
 /// <summary>
@@ -120,6 +122,8 @@ public class LicenseKey
     public LicenseType Type { get; set; }
     public long Meta { get; set; }
     public string Hash { get; set; }
+    // Hash Algorithm
+    public string Halg { get; set; }
     public DateTime Expiry { get; set; }
 }
 
@@ -152,6 +156,7 @@ public static class LicenseUtils
         internal const string ExceededOrmLiteTables = "The free-quota limit on '{0} OrmLite Tables' has been reached." + UpgradeInstructions;
         internal const string ExceededAwsTables = "The free-quota limit on '{0} AWS Tables' has been reached." + UpgradeInstructions;
         internal const string ExceededServiceStackOperations = "The free-quota limit on '{0} ServiceStack Operations' has been reached." + UpgradeInstructions;
+        internal const string ExceededJobCommandTypes = "The free-quota limit on '{0} ServiceStack.Jobs Command Types' has been reached." + UpgradeInstructions;
         internal const string ExceededAdminUi = "The Admin UI is a commercial-only premium feature." + UpgradeInstructions;
         internal const string ExceededPremiumFeature = "Unauthorized use of a commercial-only premium feature." + UpgradeInstructions;
         public const string UnauthorizedAccessRequest = "Unauthorized access request of a licensed feature.";
@@ -165,6 +170,7 @@ public static class LicenseUtils
         public const int RedisRequestPerHour = 6000;
         public const int OrmLiteTables = 10;
         public const int AwsTables = 10;
+        public const int JobCommandTypes = 10;
         public const int PremiumFeature = 0;
     }
 
@@ -175,19 +181,27 @@ public static class LicenseUtils
                                        "See https://servicestack.net to upgrade to a valid license.").Trace();
     }
 
-    private static readonly int[] revokedSubs = { 4018, 4019, 4041, 4331, 4581 };
+    private static readonly int[] revokedSubs = [4018, 4019, 4041, 4331, 4581];
 
     private class __ActivatedLicense
     {
         internal readonly LicenseKey LicenseKey;
         internal __ActivatedLicense(LicenseKey licenseKey) => LicenseKey = licenseKey;
+
+        internal static __ActivatedLicense __get => __activatedLicense;
+        private static __ActivatedLicense __activatedLicense;
+        internal static void __setActivatedLicense(__ActivatedLicense licence)
+        {
+            __activatedLicense = licence;
+            Env.UpdateServerUserAgent();
+        }
     }
 
     public static string LicenseWarningMessage { get; private set; }
         
     private static string GetLicenseWarningMessage()
     {
-        var key = __activatedLicense?.LicenseKey;
+        var key = __ActivatedLicense.__get?.LicenseKey;
         if (key == null)
             return null;
 
@@ -201,19 +215,29 @@ public static class LicenseUtils
         return null;
     }
 
-    private static __ActivatedLicense __activatedLicense;
-
-    private static void __setActivatedLicense(__ActivatedLicense licence)
-    {
-        __activatedLicense = licence;
-        Env.UpdateServerUserAgent();
-    }
 
     public static void RegisterLicense(string licenseKeyText)
     {
+        void ValidateLicenseKey(LicenseKey key)
+        {
+            var releaseDate = Env.GetReleaseDate();
+            if (releaseDate > key.Expiry)
+                throw new LicenseException($"This license has expired on {key.Expiry:d} and is not valid for use with this release."
+                                           + ContactDetails).Trace();
+
+            if (key.Type == LicenseType.Trial && DateTime.UtcNow > key.Expiry)
+                throw new LicenseException($"This trial license has expired on {key.Expiry:d}." + ContactDetails).Trace();
+
+            __ActivatedLicense.__setActivatedLicense(new __ActivatedLicense(key));
+
+            LicenseWarningMessage = GetLicenseWarningMessage();
+            if (LicenseWarningMessage != null)
+                Console.WriteLine(LicenseWarningMessage);
+        }
+
         JsConfig.InitStatics();
 
-        if (__activatedLicense != null) //Skip multiple license registrations. Use RemoveLicense() to reset.
+        if (__ActivatedLicense.__get != null) //Skip multiple license registrations. Use RemoveLicense() to reset.
             return;
 
         string subId = null;
@@ -221,16 +245,30 @@ public static class LicenseUtils
         Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
         try
         {
+            licenseKeyText = licenseKeyText?.Trim();
+            if (string.IsNullOrEmpty(licenseKeyText))
+                throw new ArgumentNullException(nameof(licenseKeyText));
+            
             if (IsFreeLicenseKey(licenseKeyText))
             {
                 ValidateFreeLicenseKey(licenseKeyText);
                 return;
             }
                 
-            var parts = licenseKeyText.SplitOnFirst('-');
-            subId = parts[0];
+            subId = licenseKeyText.LeftPart('-');
+            if (!int.TryParse(subId, out var subIdInt))
+            {
+                if (!licenseKeyText.StartsWith("TRIAL"))
+                    throw new LicenseException("This license is invalid." + ContactDetails);
+            }
+                
+            if (Env.IsAot())
+            {
+                __ActivatedLicense.__setActivatedLicense(new __ActivatedLicense(new LicenseKey { Type = LicenseType.Indie }));
+                return;
+            }
 
-            if (int.TryParse(subId, out var subIdInt) && revokedSubs.Contains(subIdInt))
+            if (revokedSubs.Contains(subIdInt))
                 throw new LicenseException("This subscription has been revoked. " + ContactDetails);
 
             var key = VerifyLicenseKeyText(licenseKeyText);
@@ -239,7 +277,7 @@ public static class LicenseUtils
         catch (PlatformNotSupportedException pex)
         {
             // Allow usage in environments like dotnet script
-            __setActivatedLicense(new __ActivatedLicense(new LicenseKey { Type = LicenseType.Indie }));
+            __ActivatedLicense.__setActivatedLicense(new __ActivatedLicense(new LicenseKey { Type = LicenseType.Indie }));
         }
         catch (Exception ex)
         {
@@ -283,23 +321,6 @@ public static class LicenseUtils
             Thread.CurrentThread.CurrentCulture = hold;
         }
     }
-
-    private static void ValidateLicenseKey(LicenseKey key)
-    {
-        var releaseDate = Env.GetReleaseDate();
-        if (releaseDate > key.Expiry)
-            throw new LicenseException($"This license has expired on {key.Expiry:d} and is not valid for use with this release."
-                                       + ContactDetails).Trace();
-
-        if (key.Type == LicenseType.Trial && DateTime.UtcNow > key.Expiry)
-            throw new LicenseException($"This trial license has expired on {key.Expiry:d}." + ContactDetails).Trace();
-
-        __setActivatedLicense(new __ActivatedLicense(key));
-
-        LicenseWarningMessage = GetLicenseWarningMessage();
-        if (LicenseWarningMessage != null)
-            Console.WriteLine(LicenseWarningMessage);
-    }
         
     private const string IndividualPrefix = "Individual (c) ";
     private const string OpenSourcePrefix = "OSS ";
@@ -337,12 +358,12 @@ public static class LicenseUtils
             throw new LicenseException($"This license has expired on {key.Expiry:d} and is not valid for use with this release.\n"
                                        + "Check https://servicestack.net/free for eligible renewals.").Trace();
 
-        __setActivatedLicense(new __ActivatedLicense(key));
+        __ActivatedLicense.__setActivatedLicense(new __ActivatedLicense(key));
     }
 
-    internal static string Info => __activatedLicense?.LicenseKey == null
+    internal static string Info => __ActivatedLicense.__get?.LicenseKey == null
         ? "NO"
-        : __activatedLicense.LicenseKey.Type switch {
+        : __ActivatedLicense.__get.LicenseKey.Type switch {
             LicenseType.Free => "FR",
             LicenseType.FreeIndividual => "FI",
             LicenseType.FreeOpenSource => "FO",
@@ -380,17 +401,17 @@ public static class LicenseUtils
 
         try
         {
-            var rsa = System.Security.Cryptography.RSA.Create();
+            var rsa = RSA.Create();
             rsa.FromXml(LicensePublicKey);
 
 #if !NETCORE
-                var verified = ((System.Security.Cryptography.RSACryptoServiceProvider)rsa)
+                var verified = ((RSACryptoServiceProvider)rsa)
                     .VerifyData(keyText.ToUtf8Bytes(), "SHA256", Convert.FromBase64String(keySign));
 #else
             var verified = rsa.VerifyData(keyText.ToUtf8Bytes(), 
                 Convert.FromBase64String(keySign), 
-                System.Security.Cryptography.HashAlgorithmName.SHA256, 
-                System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+                HashAlgorithmName.SHA256, 
+                RSASignaturePadding.Pkcs1);
 #endif
             if (verified)
             {
@@ -426,17 +447,17 @@ public static class LicenseUtils
 
         try
         {
-            var rsa = System.Security.Cryptography.RSA.Create();
+            var rsa = RSA.Create();
             rsa.FromXml(LicensePublicKey);
 
 #if !NETCORE
-                var verified = ((System.Security.Cryptography.RSACryptoServiceProvider)rsa)
+                var verified = ((RSACryptoServiceProvider)rsa)
                     .VerifyData(keyText.ToUtf8Bytes(), "SHA256", Convert.FromBase64String(keySign));
 #else
             var verified = rsa.VerifyData(keyText.ToUtf8Bytes(), 
                 Convert.FromBase64String(keySign), 
-                System.Security.Cryptography.HashAlgorithmName.SHA256, 
-                System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+                HashAlgorithmName.SHA256, 
+                RSASignaturePadding.Pkcs1);
 #endif
             if (verified)
             {
@@ -459,12 +480,12 @@ public static class LicenseUtils
 
     public static void RemoveLicense()
     {
-        __setActivatedLicense(null);
+        __ActivatedLicense.__setActivatedLicense(null);
     }
 
     public static LicenseFeature ActivatedLicenseFeatures()
     {
-        return __activatedLicense?.LicenseKey.GetLicensedFeatures() ?? LicenseFeature.None;
+        return __ActivatedLicense.__get?.LicenseKey.GetLicensedFeatures() ?? LicenseFeature.None;
     }
 
     public static void ApprovedUsage(int allowedUsage, int actualUsage, string message)
@@ -538,6 +559,9 @@ public static class LicenseUtils
                 {
                     case QuotaType.Operations:
                         ApprovedUsage(FreeQuotas.ServiceStackOperations, count, ErrorMessages.ExceededServiceStackOperations);
+                        return;
+                    case QuotaType.Commands:
+                        ApprovedUsage(FreeQuotas.JobCommandTypes, count, ErrorMessages.ExceededJobCommandTypes);
                         return;
                 }
                 break;
@@ -672,16 +696,21 @@ public static class LicenseUtils
     }
         
     //License Utils
-    public static bool VerifySignedHash(byte[] DataToVerify, byte[] SignedData, System.Security.Cryptography.RSAParameters Key)
+    public static bool VerifySignedHash(byte[] dataToVerify, byte[] signedData, RSAParameters key)
+    {
+        using var sha = TextConfig.CreateSha();
+        return VerifySignedHash(dataToVerify, signedData, key, sha);
+    }
+    
+    public static bool VerifySignedHash(byte[] dataToVerify, byte[] signedData, RSAParameters key, object halg)
     {
         try
         {
-            var RSAalg = new System.Security.Cryptography.RSACryptoServiceProvider();
-            RSAalg.ImportParameters(Key);
-            return RSAalg.VerifySha1Data(DataToVerify, SignedData);
-
+            var rsAlg = new RSACryptoServiceProvider();
+            rsAlg.ImportParameters(key);
+            return rsAlg.VerifyData(dataToVerify, halg, signedData);
         }
-        catch (System.Security.Cryptography.CryptographicException ex)
+        catch (CryptographicException ex)
         {
             Tracer.Instance.WriteError(ex);
             return false;
@@ -708,7 +737,7 @@ public static class LicenseUtils
 #endif
     }
         
-    private static void FromXml(this System.Security.Cryptography.RSA rsa, string xml)
+    private static void FromXml(this RSA rsa, string xml)
     {
 #if NETFX
             rsa.FromXmlString(xml);
@@ -720,9 +749,9 @@ public static class LicenseUtils
     }
         
 #if !NET45
-    private static System.Security.Cryptography.RSAParameters ExtractFromXml(string xml)
+    private static RSAParameters ExtractFromXml(string xml)
     {
-        var csp = new System.Security.Cryptography.RSAParameters();
+        var csp = new RSAParameters();
         using var reader = System.Xml.XmlReader.Create(new StringReader(xml));
         while (reader.Read())
         {
@@ -776,23 +805,42 @@ public static class LicenseUtils
         
     public static bool VerifyLicenseKeyText(this string licenseKeyText, out LicenseKey key)
     {
-        var publicRsaProvider = new System.Security.Cryptography.RSACryptoServiceProvider();
-        publicRsaProvider.FromXml(LicenseUtils.LicensePublicKey);
+        var publicRsaProvider = new RSACryptoServiceProvider();
+        publicRsaProvider.FromXml(LicensePublicKey);
         var publicKeyParams = publicRsaProvider.ExportParameters(false);
 
         key = licenseKeyText.ToLicenseKey();
         var originalData = key.GetHashKeyToSign().ToUtf8Bytes();
         var signedData = Convert.FromBase64String(key.Hash);
 
-        return VerifySignedHash(originalData, signedData, publicKeyParams);
+        var halg = CreateHashAlgorithm(key.Halg);
+        using (halg as IDisposable)
+        {
+            return VerifySignedHash(originalData, signedData, publicKeyParams, halg);
+        }
+    }
+
+    public static object CreateHashAlgorithm(string name)
+    {
+        object halg = name switch {
+            nameof(SHA256) => SHA256.Create(),
+            nameof(SHA384) => SHA384.Create(),
+            nameof(SHA512) => SHA512.Create(),
+#if NET8_0_OR_GREATER            
+            nameof(SHA3_256) => SHA3_256.Create(),
+            nameof(SHA3_512) => SHA3_512.Create(),
+#endif
+            _ => SHA1.Create()
+        };
+        return halg;
     }
 
     public static bool VerifyLicenseKeyTextFallback(this string licenseKeyText, out LicenseKey key)
     {
-        System.Security.Cryptography.RSAParameters publicKeyParams;
+        RSAParameters publicKeyParams;
         try
         {
-            var publicRsaProvider = new System.Security.Cryptography.RSACryptoServiceProvider();
+            var publicRsaProvider = new RSACryptoServiceProvider();
             publicRsaProvider.FromXml(LicenseUtils.LicensePublicKey);
             publicKeyParams = publicRsaProvider.ExportParameters(false);
         }
@@ -833,17 +881,15 @@ public static class LicenseUtils
 
         try
         {
-            return VerifySignedHash(originalData, signedData, publicKeyParams);
+            var halg = CreateHashAlgorithm(key.Halg);
+            using (halg as IDisposable)
+            {
+                return VerifySignedHash(originalData, signedData, publicKeyParams, halg);
+            }
         }
         catch (Exception ex)
         {
             throw new Exception($"Could not Verify License Key ({originalData.Length}, {signedData.Length})", ex);
         }
     }
-
-    public static bool VerifySha1Data(this System.Security.Cryptography.RSACryptoServiceProvider RSAalg, byte[] unsignedData, byte[] encryptedData)
-    {
-        using var sha = TextConfig.CreateSha();
-        return RSAalg.VerifyData(unsignedData, sha, encryptedData);
-    }        
 }

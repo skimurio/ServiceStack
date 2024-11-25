@@ -1,22 +1,18 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 using Funq;
 using NUnit.Framework;
 using ServiceStack;
 using ServiceStack.Admin;
 using ServiceStack.Auth;
 using ServiceStack.Data;
+using ServiceStack.DataAnnotations;
+using ServiceStack.Host;
 using ServiceStack.HtmlModules;
 using ServiceStack.IO;
+using ServiceStack.Jobs;
 using ServiceStack.NativeTypes;
 using ServiceStack.OrmLite;
-using ServiceStack.Testing;
 using ServiceStack.Text;
+using System.Text;
 
 namespace NetCoreTests;
 
@@ -51,6 +47,8 @@ public class PublishTasks
             ["servicestack-client.mjs"] = "../../../../servicestack-client/dist/servicestack-client.min.mjs",
             ["servicestack-vue.mjs"] = "../../../../servicestack-vue/dist/servicestack-vue.min.mjs",
             ["vue.mjs"] = "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js",
+            ["chart.js"] = "https://cdn.jsdelivr.net/npm/chart.js/+esm",
+            ["color.js"] = "https://cdn.jsdelivr.net/npm/@kurkle/color/+esm",
         };
 
         var jsDir = "../../src/ServiceStack/js";
@@ -62,6 +60,12 @@ public class PublishTasks
             {
                 $"GET {jsFile.Value}".Print();
                 var js = jsFile.Value.GetStringFromUrl();
+
+                if (jsFile.Key == "chart.js")
+                {
+                    js = js.Replace("/npm/@kurkle/color@0.3.2/+esm", "color.js");
+                }
+                
                 File.WriteAllText(toFile, js);
             }
             else
@@ -197,10 +201,11 @@ public class PublishTasks
 
     class AppHost : AppSelfHostBase
     {
-        public AppHost() : base(nameof(PublishTasks), typeof(MetadataAppService), typeof(TestService)) {}
+        public AppHost() : base(nameof(PublishTasks), typeof(MetadataAppService), typeof(UiServices)) {}
         public override void Configure(Container container)
         {
-            Metadata.ForceInclude = new() {
+            Metadata.ForceInclude =
+            [
                 typeof(MetadataApp),
                 typeof(AppMetadata),
                 typeof(AdminQueryUsers),
@@ -216,11 +221,26 @@ public class PublishTasks
                 typeof(AdminProfiling),
                 typeof(AdminRedis),
                 typeof(AdminDatabase),
-            };
+                typeof(AdminQueryApiKeys),
+                typeof(AdminCreateApiKey),
+                typeof(AdminUpdateApiKey),
+                typeof(AdminDeleteApiKey),
+                typeof(RequestLogsInfo),
+                typeof(ViewCommands),
+                typeof(ExecuteCommand),
+                
+                ..UiServices.AutoQueryTypes,
+                ..UiServices.BackgroundJobTypes,
+            ];
             
-            Plugins.Add(new AuthFeature(() => new AuthUserSession(), new [] {
-                new CredentialsAuthProvider(AppSettings),
-            }));
+            UiServices.BackgroundJobTypes.Each(x =>
+            {
+                NativeTypesService.BuiltInClientDtos.RemoveAll(x => UiServices.BackgroundJobTypes.Contains(x));
+            });
+            
+            Plugins.Add(new AuthFeature(() => new AuthUserSession(), [
+                new CredentialsAuthProvider(AppSettings)
+            ]));
             
             var dbFactory = new OrmLiteConnectionFactory(":memory:",
                 SqliteDialect.Provider);
@@ -236,10 +256,15 @@ public class PublishTasks
 
             Plugins.Add(new AdminUsersFeature());
             Plugins.Add(new AutoQueryFeature());
-            Plugins.Add(new RequestLogsFeature());
+            Plugins.Add(new RequestLogsFeature {
+                RequestLogger = new SqliteRequestLogger()
+            });
             Plugins.Add(new ProfilingFeature());
             Plugins.Add(new AdminRedisFeature());
             Plugins.Add(new AdminDatabaseFeature());
+            Plugins.Add(new CommandsFeature());
+            Plugins.Add(new ApiKeysFeature());
+            Plugins.Add(new BackgroundsJobFeature { EnableAdmin = true });
         }
     }
 
@@ -248,6 +273,8 @@ public class PublishTasks
     {
         var baseUrl = "http://localhost:20000";
         using var appHost = new AppHost().Init().Start(baseUrl);
+        
+        Thread.Sleep(20000);
         
         var sb = new StringBuilder("import { ApiResult } from './client';\n\n");
         var dtos = baseUrl.CombineWith("/types/typescript").GetStringFromUrl();
@@ -260,6 +287,38 @@ public class PublishTasks
         File.WriteAllText(Path.GetFullPath("./lib/types.ts"), sb.ToString());
         
         File.WriteAllText(Path.GetFullPath("./admin-ui/lib/dtos.mjs"), mjs);
+        
+        var metadata = baseUrl.CombineWith("/api/AdminMetadataTypes").GetStringFromUrl();
+
+        var metadataJs = $"export default {metadata}";
+        File.WriteAllText(Path.GetFullPath("./admin-ui/lib/metadata.mjs"), metadataJs);
+        
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.mjs"), mjs);
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.ts"), dtos);
+
+        var python = baseUrl.CombineWith("/types/python").GetStringFromUrl();
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.py"), python);
+
+        var dart = baseUrl.CombineWith("/types/dart").GetStringFromUrl();
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.dart"), dart);
+
+        var php = baseUrl.CombineWith("/types/php").GetStringFromUrl();
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.php"), php);
+
+        var java = baseUrl.CombineWith("/types/java").GetStringFromUrl();
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.java"), java);
+
+        var kotlin = baseUrl.CombineWith("/types/kotlin").GetStringFromUrl();
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.kt"), kotlin);
+
+        var swift = baseUrl.CombineWith("/types/swift").GetStringFromUrl();
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.swift"), swift);
+
+        var fsharp = baseUrl.CombineWith("/types/fsharp").GetStringFromUrl();
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.fs"), fsharp);
+
+        var vb = baseUrl.CombineWith("/types/vbnet").GetStringFromUrl();
+        File.WriteAllText(Path.GetFullPath("./wwwroot/dtos/dtos.vb"), vb);
     }
 
     [Test]
@@ -293,7 +352,7 @@ public class PublishTasks
         var distFs = new FileSystemVirtualFiles("dist");
 
         var typesFile = typesFs.GetFile("lib/types.d.ts");
-        memFs.WriteFile("0_" + typesFile.Name, typesFile);
+        await memFs.WriteFileAsync("0_" + typesFile.Name, typesFile);
         memFs.TransformAndCopy("shared", typesFs, distFs);
 
         memFs.Clear();
@@ -310,8 +369,78 @@ public class PublishTasks
     }
 }
 
-public class TestService : Service
+[ExcludeMetadata, Tag(TagNames.Admin)]
+public class AdminMetadataTypes : IGet, IReturn<MetadataTypes> {}
+
+
+public class UiServices : Service
 {
+    public static Type[] AutoQueryTypes =
+    [
+        typeof(AdminQueryBackgroundJobs),
+        typeof(AdminQueryJobSummary),
+        typeof(AdminQueryScheduledTasks),
+        typeof(AdminQueryCompletedJobs),
+        typeof(AdminQueryFailedJobs),
+        typeof(AdminQueryRequestLogs),
+    ];
+    
+    public static Type[] BackgroundJobTypes =
+    [
+        typeof(AdminJobInfo),
+        typeof(AdminGetJob),
+        typeof(AdminGetJobProgress),
+        typeof(AdminCancelJobs),
+        typeof(AdminRequeueFailedJobs),
+        typeof(AdminJobDashboard),
+        typeof(AdminQueryBackgroundJobs),
+        typeof(AdminQueryJobSummary),
+        typeof(AdminQueryScheduledTasks),
+        typeof(AdminQueryCompletedJobs),
+        typeof(AdminQueryFailedJobs),
+        typeof(AdminQueryRequestLogs),
+
+        typeof(BackgroundJobBase),
+        typeof(BackgroundJobOptions),
+        typeof(BackgroundJob),
+        typeof(JobSummary),
+        typeof(ScheduledTask),
+        typeof(CompletedJob),
+        typeof(FailedJob),
+        typeof(WorkerStats),
+    ];
+    
+    // Generate app metadata.js required for all AutoQuery APIs in built-in UIs
+    public object Any(AdminMetadataTypes request)
+    {
+        var meta = new ServiceMetadata([]);
+        Type[] requestTypes = AutoQueryTypes;
+        foreach (var requestType in requestTypes)
+        {
+            var returnMarker = requestType.GetTypeWithGenericTypeDefinitionOf(typeof(IReturn<>));
+            var responseType = returnMarker?.GetGenericArguments()[0];
+            meta.Add(typeof(AdminJobServices), requestType, responseType);
+        }
+
+        var config = new MetadataTypesConfig
+        {
+            AddNamespaces = [],
+            DefaultNamespaces = [],
+            DefaultImports = [],
+            IncludeTypes = [],
+            ExcludeTypes = [],
+            ExportTags = [],
+            TreatTypesAsStrings = [],
+            IgnoreTypes = [],
+            ExportTypes = [],
+            ExportAttributes = [],
+            IgnoreTypesInNamespaces = [],
+        };
+        var generator = new MetadataTypesGenerator(meta, config);
+        var to = generator.GetMetadataTypes(Request);
+        to.Config = null;
+        return to;
+    }
 }
 
 

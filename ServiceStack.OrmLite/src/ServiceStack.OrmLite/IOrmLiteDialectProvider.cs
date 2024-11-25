@@ -68,7 +68,9 @@ public interface IOrmLiteDialectProvider
     Func<string, string> ParamNameFilter { get; set; }
         
     Dictionary<string, string> Variables { get; }
+
     bool SupportsSchema { get; }
+    bool SupportsConcurrentWrites { get; }
 
     /// <summary>
     /// Quote the string so that it can be used inside an SQL-expression
@@ -254,6 +256,7 @@ public interface IOrmLiteDialectProvider
     string ToChangeColumnNameStatement(string schema, string table, FieldDefinition fieldDef, string oldColumn);
     string ToRenameColumnStatement(string schema, string table, string oldColumn, string newColumn);
     string ToDropColumnStatement(string schema, string table, string column);
+    string ToDropConstraintStatement(string schema, string table, string constraint);
         
     string ToAddForeignKeyStatement<T, TForeign>(Expression<Func<T, object>> field,
         Expression<Func<TForeign, object>> foreignField,
@@ -266,6 +269,7 @@ public interface IOrmLiteDialectProvider
     string ToCreateIndexStatement<T>(Expression<Func<T,object>> field, string indexName=null, bool unique=false);
 
     //Async
+    bool SupportsAsync { get; }
     Task OpenAsync(IDbConnection db, CancellationToken token = default);
     Task<IDataReader> ExecuteReaderAsync(IDbCommand cmd, CancellationToken token = default);
     Task<int> ExecuteNonQueryAsync(IDbCommand cmd, CancellationToken token = default);

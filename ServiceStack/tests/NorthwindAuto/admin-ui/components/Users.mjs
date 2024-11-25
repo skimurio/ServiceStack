@@ -2,7 +2,6 @@ import { computed, inject, nextTick, onMounted, ref, watch } from "vue"
 import { useClient, useMetadata } from "@servicestack/vue"
 import { AdminCreateUser, AdminDeleteUser, AdminGetUser, AdminQueryUsers, AdminUpdateUser } from "dtos"
 import { apiValueFmt, map, mapGet, humanify, ApiResult, toCamelCase } from "@servicestack/client"
-import { mapGetForInput } from "core"
 
 /**: cheap nav update without creating multiple App.events subs per child component */
 let adminUsersNav = null
@@ -372,7 +371,7 @@ export const EditUser = {
         
         const showForm = ref(true)
         function updateRequest(value) {
-            console.log('updateRequest', value)
+            console.debug('updateRequest', value)
         }
         
         return {
